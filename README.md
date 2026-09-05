@@ -1,0 +1,1 @@
+a mobile marketplace app for Lebanon that connects customers with local tradespeople (plumbers, electricians, and so on). A customer picks a category, submits a service request with a preferred date and time slot, a provider accepts and completes it, and afterward the customer can leave a review that's tied to that finished job so it can't be faked.
