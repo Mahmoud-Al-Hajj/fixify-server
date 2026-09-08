@@ -8,6 +8,16 @@ function required(name: string): string {
   return value;
 }
 
+// DB_PASSWORD may legitimately be an empty string (e.g. a local root user with
+// no password) — only an unset variable counts as missing.
+function requiredAllowEmpty(name: string): string {
+  const value = process.env[name];
+  if (value === undefined) {
+    throw new Error(`Missing required environment variable: ${name}`);
+  }
+  return value;
+}
+
 function intWithDefault(name: string, fallback: number): number {
   const raw = process.env[name];
   if (!raw) return fallback;
@@ -25,7 +35,7 @@ export const env = {
     host: required("DB_HOST"),
     port: intWithDefault("DB_PORT", 3306),
     user: required("DB_USER"),
-    password: required("DB_PASSWORD"),
+    password: requiredAllowEmpty("DB_PASSWORD"),
     database: required("DB_NAME"),
   },
   jwt: {

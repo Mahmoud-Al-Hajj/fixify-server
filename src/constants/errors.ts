@@ -2,6 +2,9 @@ export abstract class DomainError extends Error {
   abstract readonly code: string;
 }
 
+export class UnauthorizedError extends DomainError {
+  readonly code = "UNAUTHORIZED";
+}
 export class NotFoundError extends DomainError {
   readonly code = "NOT_FOUND";
 }

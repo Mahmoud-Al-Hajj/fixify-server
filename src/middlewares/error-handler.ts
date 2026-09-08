@@ -1,7 +1,8 @@
 import type { Request, Response, NextFunction } from "express";
-import { env } from "../config/env";
+import { logger } from "../config/logger";
 import {
   DomainError,
+  UnauthorizedError,
   NotFoundError,
   ForbiddenError,
   ConflictError,
@@ -11,6 +12,7 @@ import {
 
 const STATUS_BY_ERROR = new Map<Function, number>([
   [ValidationError, 400],
+  [UnauthorizedError, 401],
   [ForbiddenError, 403],
   [NotFoundError, 404],
   [ConflictError, 409],
@@ -19,7 +21,7 @@ const STATUS_BY_ERROR = new Map<Function, number>([
 
 export function errorHandler(
   err: unknown,
-  _req: Request,
+  req: Request,
   res: Response,
   _next: NextFunction
 ): void {
@@ -31,10 +33,14 @@ export function errorHandler(
     return;
   }
 
-  // Unexpected — log it server-side, never leak details
-  if (env.nodeEnv !== "production") {
-    process.stderr.write(`${String(err)}\n`);
-  }
+  // Unexpected — always log server-side, never leak details to the client
+  logger.error("unhandled error", {
+    requestId: req.id,
+    userId: req.user?.id,
+    method: req.method,
+    path: req.originalUrl,
+    error: err instanceof Error ? err.message : String(err),
+  });
   res.status(500).json({
     error: { code: "INTERNAL_ERROR", message: "Something went wrong" },
   });

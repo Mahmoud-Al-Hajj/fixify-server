@@ -2,20 +2,24 @@ import express from "express";
 import helmet from "helmet";
 import cors from "cors";
 import { env } from "./config/env";
+import { requestId } from "./middlewares/request-id";
 import { notFoundHandler } from "./middlewares/not-found";
 import { errorHandler } from "./middlewares/error-handler";
+import { categoriesRouter } from "./routes/categories";
 
 export const app = express();
 
 app.use(helmet());
 
 // CORS — explicit allowlist, never a wildcard
-// app.use(
-//   cors({
-//     origin: env.corsOrigins,
-//     credentials: true,
-//   })
-// );
+app.use(
+  cors({
+    origin: env.corsOrigins,
+    credentials: true,
+  })
+);
+
+app.use(requestId);
 
 app.use(express.json({ limit: "100kb" }));
 
@@ -25,7 +29,7 @@ app.get("/health", (_req, res) => {
 });
 
 // Feature routes
-//app.use("/categories", categoriesRouter);
+app.use("/categories", categoriesRouter);
 
 // Unmatched route → 404 in the standard error shape
 app.use(notFoundHandler);

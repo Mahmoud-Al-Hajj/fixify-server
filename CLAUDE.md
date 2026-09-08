@@ -121,6 +121,8 @@ running, the layering is wrong.
 
 ---
 
+ADMIN IS OUTSIDE OF SCOPE, ALSO REALTIME CHATTING IS OUTSIDE TOO.
+
 ## The four phases
 
 **Every task runs through all four, in order. Phases 1 and 2 produce no file edits.**

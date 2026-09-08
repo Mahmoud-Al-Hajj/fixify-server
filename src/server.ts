@@ -1,16 +1,18 @@
 import { env } from "./config/env";
 import { assertDbReachable } from "./models-db/pool";
 import { app } from "./app";
+import { logger } from "./config/logger";
 
 async function start(): Promise<void> {
   await assertDbReachable();
   app.listen(env.port, () => {
-    // replace with your logger once it exists
-    process.stdout.write(`listening on ${env.port}\n`);
+    logger.info(`listening on ${env.port}`);
   });
 }
 
 start().catch((err) => {
-  process.stderr.write(`failed to start: ${String(err)}\n`);
+  logger.error("failed to start", {
+    error: err instanceof Error ? err.message : String(err),
+  });
   process.exit(1);
 });
