@@ -1,6 +1,7 @@
 import type { RowDataPacket, ResultSetHeader } from "mysql2/promise";
 import type { PoolConnection } from "mysql2/promise";
 import { pool } from "./pool";
+import { formatMysqlDateTime } from "./format-datetime";
 
 export interface PublicUser {
   id: string;
@@ -40,7 +41,7 @@ interface PublicUserRow extends RowDataPacket {
 
 interface ResetTokenRow extends RowDataPacket {
   id: string;
-  reset_expires_at: Date;
+  reset_expires_at: string;
 }
 
 export async function insertUser(
@@ -118,7 +119,7 @@ export async function setPasswordResetToken(
 
 export async function findUserByResetTokenHash(
   tokenHash: string
-): Promise<{ id: string; resetExpiresAt: Date } | null> {
+): Promise<{ id: string; resetExpiresAt: string } | null> {
   const [rows] = await pool.query<ResetTokenRow[]>(
     `SELECT id, reset_expires_at FROM users
      WHERE reset_token_hash = ? AND reset_expires_at > UTC_TIMESTAMP(3)`,
@@ -126,7 +127,10 @@ export async function findUserByResetTokenHash(
   );
   const row = rows[0];
   if (!row) return null;
-  return { id: row.id, resetExpiresAt: row.reset_expires_at };
+  return {
+    id: row.id,
+    resetExpiresAt: formatMysqlDateTime(row.reset_expires_at),
+  };
 }
 
 export async function updatePasswordAndClearResetToken(
