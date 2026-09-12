@@ -6,6 +6,7 @@ import { requestId } from "./middlewares/request-id";
 import { notFoundHandler } from "./middlewares/not-found";
 import { errorHandler } from "./middlewares/error-handler";
 import { categoriesRouter } from "./routes/categories";
+import { authRouter } from "./routes/auth";
 
 export const app = express();
 
@@ -30,6 +31,7 @@ app.get("/health", (_req, res) => {
 
 // Feature routes
 app.use("/categories", categoriesRouter);
+app.use("/auth", authRouter);
 
 // Unmatched route → 404 in the standard error shape
 app.use(notFoundHandler);
