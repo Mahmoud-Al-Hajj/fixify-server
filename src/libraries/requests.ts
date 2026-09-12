@@ -12,6 +12,8 @@ import {
   findProviderAcceptance,
   providerAcceptsCategory,
 } from "../models-db/providers";
+import { insertJobEvent } from "../models-db/job-events";
+import { JOB_EVENT_TYPE } from "../constants/job-event-type";
 import {
   NotFoundError,
   ForbiddenError,
@@ -36,18 +38,22 @@ export async function createRequest(
   if (!provider) {
     throw new NotFoundError("Provider not found");
   }
-  if (!provider.isAccepting) {
-    throw new ConflictError(
-      "This provider is not currently accepting requests"
-    );
-  }
 
+  // The category check runs before is_accepting: a wrong category is a
+  // permanent input error, a paused provider is temporary state. Reporting
+  // the 409 first would send the client away to retry a request that can
+  // never succeed.
   const offersCategory = await providerAcceptsCategory(
     input.providerId,
     input.categoryId
   );
   if (!offersCategory) {
     throw new ValidationError("Provider does not offer this category");
+  }
+  if (!provider.isAccepting) {
+    throw new ConflictError(
+      "This provider is not currently accepting requests"
+    );
   }
 
   const id = randomUUID();
@@ -57,6 +63,12 @@ export async function createRequest(
     await conn.beginTransaction();
     try {
       await insertRequest(conn, { id, ...input });
+      await insertJobEvent(conn, {
+        id: randomUUID(),
+        requestId: id,
+        actorUserId: input.customerId,
+        eventType: JOB_EVENT_TYPE.REQUEST_CREATED,
+      });
       await conn.commit();
     } catch (err) {
       await conn.rollback();
