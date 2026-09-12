@@ -18,3 +18,10 @@ export function authenticate(
   req.user = { id: payload.sub };
   next();
 }
+
+export function requireUser(req: Request): { id: string } {
+  if (!req.user) {
+    throw new UnauthorizedError("Authentication required");
+  }
+  return req.user;
+}
