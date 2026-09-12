@@ -264,6 +264,15 @@ options laid out.
 - Every query filtered on a column in a hot path has an index. If you add such a query,
   say which index serves it.
 
+Every DATETIME in this schema holds Beirut wall-clock digits with
+no offset, EXCEPT users.reset_expires_at, which is a true UTC
+instant written from Date.now() and compared against
+UTC_TIMESTAMP(3) in SQL. The pool sets dateStrings: true, so reads
+return strings; models pass them through formatMysqlDateTime. The
+write path still encodes Dates via UTC getters — a Date written to
+a wall-clock column must be built with Date.UTC(...).
+
+
 ### Operations that require a transaction
 
 These are not optional. Each writes to more than one table and must be atomic:
