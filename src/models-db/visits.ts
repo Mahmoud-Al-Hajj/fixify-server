@@ -54,6 +54,25 @@ export async function findVisitsForRequest(
   return rows.map(mapRow);
 }
 
+// One query for a whole request list rather than one per request. Ordered so
+// the first row per request_id is that request's earliest open visit. Served
+// by the same fk_visits_request (request_id, provider_id) index.
+export async function findOpenVisitsForRequests(
+  requestIds: readonly string[],
+  openStatuses: readonly VisitStatus[]
+): Promise<Visit[]> {
+  if (requestIds.length === 0) return [];
+  const [rows] = await pool.query<VisitRow[]>(
+    `SELECT id, request_id, provider_id, status, scheduled_start,
+            scheduled_end, actual_start
+     FROM visits
+     WHERE request_id IN (?) AND status IN (?)
+     ORDER BY request_id, scheduled_start, id`,
+    [requestIds, openStatuses]
+  );
+  return rows.map(mapRow);
+}
+
 export interface UpdateVisitStatusInput {
   id: string;
   fromStatus: VisitStatus;

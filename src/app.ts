@@ -8,6 +8,7 @@ import { errorHandler } from "./middlewares/error-handler";
 import { categoriesRouter } from "./routes/categories";
 import { authRouter } from "./routes/auth";
 import { requestsRouter } from "./routes/requests";
+import { providersRouter } from "./routes/providers";
 
 export const app = express();
 
@@ -34,6 +35,7 @@ app.get("/health", (_req, res) => {
 app.use("/categories", categoriesRouter);
 app.use("/auth", authRouter);
 app.use("/requests", requestsRouter);
+app.use("/providers", providersRouter);
 
 // Unmatched route → 404 in the standard error shape
 app.use(notFoundHandler);

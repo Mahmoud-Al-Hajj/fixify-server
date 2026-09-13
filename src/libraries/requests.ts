@@ -16,6 +16,7 @@ import {
 } from "../models-db/providers";
 import {
   findVisitsForRequest,
+  findOpenVisitsForRequests,
   updateVisitStatus,
   cancelOpenVisitsForRequest,
   type Visit,
@@ -121,13 +122,35 @@ export function resolveActorRole(
 export async function getRequestForActor(
   requestId: string,
   actorUserId: string
-): Promise<Request> {
+): Promise<{ request: Request; visits: Visit[] }> {
   const request = await findRequestById(requestId);
   if (!request) {
     throw new NotFoundError("Request not found");
   }
   resolveActorRole(request, actorUserId);
-  return request;
+  const visits = await findVisitsForRequest(request.id);
+  return { request, visits };
+}
+
+async function attachNextVisits(
+  requests: Request[]
+): Promise<Array<{ request: Request; nextVisit: Visit | null }>> {
+  const openVisits = await findOpenVisitsForRequests(
+    requests.map((request) => request.id),
+    OPEN_VISIT_STATUSES
+  );
+  // Rows arrive ordered by request, then scheduled_start, so the first one
+  // seen for each request is its next visit.
+  const nextVisitByRequest = new Map<string, Visit>();
+  for (const visit of openVisits) {
+    if (!nextVisitByRequest.has(visit.requestId)) {
+      nextVisitByRequest.set(visit.requestId, visit);
+    }
+  }
+  return requests.map((request) => ({
+    request,
+    nextVisit: nextVisitByRequest.get(request.id) ?? null,
+  }));
 }
 
 const CHANGED_CONCURRENTLY_MESSAGE =
@@ -336,12 +359,12 @@ export async function completeRequest(
 
 export async function listRequestsForCustomer(
   customerId: string
-): Promise<Request[]> {
-  return listRequestsForCustomerModel(customerId);
+): Promise<Array<{ request: Request; nextVisit: Visit | null }>> {
+  return attachNextVisits(await listRequestsForCustomerModel(customerId));
 }
 
 export async function listRequestsForProvider(
   providerId: string
-): Promise<Request[]> {
-  return listRequestsForProviderModel(providerId);
+): Promise<Array<{ request: Request; nextVisit: Visit | null }>> {
+  return attachNextVisits(await listRequestsForProviderModel(providerId));
 }

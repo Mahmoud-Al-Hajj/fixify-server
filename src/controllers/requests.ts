@@ -4,6 +4,7 @@ import * as quotesService from "../libraries/quotes";
 import { REQUEST_ACTOR_ROLE } from "../libraries/request-state-machine";
 import { requireUser } from "../middlewares/authenticate";
 import type { QueryLocals, ParamsLocals } from "../middlewares/validate";
+import type { Visit } from "../models-db/visits";
 import type {
   CreateRequestBody,
   ListRequestsQuery,
@@ -31,17 +32,33 @@ export async function createRequestHandler(
   res.status(201).json({ request });
 }
 
+// A visit nested under its request: requestId and providerId are dropped
+// because the enclosing request already carries them.
+function toVisitView(visit: Visit) {
+  return {
+    id: visit.id,
+    status: visit.status,
+    scheduledStart: visit.scheduledStart,
+    scheduledEnd: visit.scheduledEnd,
+    actualStart: visit.actualStart,
+  };
+}
+
 export async function listRequestsHandler(
   req: Request,
   res: Response<unknown, QueryLocals<ListRequestsQuery>>
 ): Promise<void> {
   const user = requireUser(req);
-  let requests;
+  let items;
   if (res.locals.query.role === REQUEST_ACTOR_ROLE.CUSTOMER) {
-    requests = await requestsService.listRequestsForCustomer(user.id);
+    items = await requestsService.listRequestsForCustomer(user.id);
   } else {
-    requests = await requestsService.listRequestsForProvider(user.id);
+    items = await requestsService.listRequestsForProvider(user.id);
   }
+  const requests = items.map(({ request, nextVisit }) => ({
+    ...request,
+    nextVisit: nextVisit === null ? null : toVisitView(nextVisit),
+  }));
   res.status(200).json({ requests });
 }
 
@@ -136,9 +153,11 @@ export async function getRequestHandler(
   res: Response<unknown, ParamsLocals<RequestIdParams>>
 ): Promise<void> {
   const user = requireUser(req);
-  const request = await requestsService.getRequestForActor(
+  const { request, visits } = await requestsService.getRequestForActor(
     res.locals.params.id,
     user.id
   );
-  res.status(200).json({ request });
+  res.status(200).json({
+    request: { ...request, visits: visits.map(toVisitView) },
+  });
 }

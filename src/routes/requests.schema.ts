@@ -43,14 +43,10 @@ export const createRequestSchema = z.object({
   serviceType: z.enum(SERVICE_TYPE).nullable().default(null),
   description: z.string().trim().min(1).max(2000),
   addressText: z.string().trim().min(1).max(300),
-  requestedStart: localDateTime.nullable().default(null),
-  estimatedDurationMinutes: z
-    .number()
-    .int()
-    .min(15)
-    .max(1440)
-    .nullable()
-    .default(null),
+  // Both required: accepting a quote creates the first visit from them, so a
+  // request without them could be quoted but never accepted.
+  requestedStart: localDateTime,
+  estimatedDurationMinutes: z.number().int().min(15).max(1440),
   isUrgent: z.boolean().default(false),
 });
 export type CreateRequestBody = z.infer<typeof createRequestSchema>;
