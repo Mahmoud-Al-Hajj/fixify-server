@@ -11,7 +11,7 @@ feature count.
 
 **Two roles.** Customers submit service requests, accept or decline quotes, track jobs
 through their visits, and review completed work. Providers manage the trades they offer,
-set weekly working hours, quote prices, and accept, schedule, and complete incoming jobs.
+set weekly working hours, quote prices, and reject, schedule, and complete incoming jobs.
 Both are rows in `users`; a provider additionally has a `providers` row.
 
 **The central domain rule.** Every review is structurally tied to a completed job. A review
@@ -175,7 +175,7 @@ running, the layering is wrong.
 | -------------------------------------------------------------------------- | ----------------------- |
 | Route path, HTTP method, middleware chain                                  | Route                   |
 | Reading validated input, choosing a status code, shaping the response body | Controller              |
-| "Only the assigned provider may accept this request"                       | Service                 |
+| "Only the assigned provider may reject this request"                       | Service                 |
 | "PENDING may go to SCHEDULED, REJECTED, or CANCELLED"                      | Service (state machine) |
 | "Accepting a quote creates the first visit"                                | Service (transaction)   |
 | Calling the Anthropic API and parsing its response                         | Dedicated AI module     |
@@ -366,8 +366,9 @@ Photos are stored outside the database; `request_photos.url` holds a reference o
 - Every endpoint that mutates or reads user-owned data verifies ownership against the
   authenticated user. A valid token is not authorisation.
 - On a request, "owner" means the customer OR the assigned provider — and which one
-  matters. A provider may accept; a customer may not. A customer may review; a provider
-  may not. Check the role against the action, not just membership.
+  matters. A provider may reject; a customer may not. A customer may accept a quote; a
+  provider may not. A customer may review; a provider may not. Check the role against
+  the action, not just membership.
 - Secrets come from environment variables via a single typed config module that fails
   loudly at startup if a required variable is missing. No `process.env` access scattered
   through the codebase, no fallback defaults for secrets.
@@ -400,7 +401,7 @@ Photos are stored outside the database; `request_photos.url` holds a reference o
   is a design problem to raise, not suppress.
 - No `console.log` in committed code. Use the logger.
 - Functions do one thing. A controller that is 80 lines is doing a service's job.
-- Name things for what they mean in the domain (`acceptRequest`, not `updateStatus2`).
+- Name things for what they mean in the domain (`rejectRequest`, not `updateStatus2`).
 - No dead code, commented-out alternatives, TODO placeholders, or unused exports left
   behind.
 - No premature abstraction. An interface with one implementation and one call site is

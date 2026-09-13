@@ -127,7 +127,7 @@ That one response feeds **six** different places in the UI:
 - `[P]` Service area — city/district dropdown (**no GPS, no lat/lng**)
 - `[P]` Base rate per category — displayed as "from $30"
 - `[P]` Weekly working-hours pattern (per-weekday start/end times)
-- `[P]` Reputation stat strip — acceptance rate, median response time, completion rate, jobs completed, repeat customers
+- `[P]` Reputation stat strip — median response time, completion rate, jobs completed, repeat customers
 - `[P]` Work gallery — before/after photo pairs from completed jobs
 - `[P]` Earnings dashboard — this month / last month / total, bar chart by month and category
 
@@ -181,13 +181,12 @@ That one response feeds **six** different places in the UI:
 ### 4.7 Booking Lifecycle
 
 - `[E]` Submit a request
-- `[E]` Provider accepts or rejects
-- `[E]` Cancel a pending request (either side)
-- `[E]` Provider marks the job complete
-- `[E]` Customer confirms completion
+- `[E]` Provider rejects a pending request; the customer accepts a quote (pending → scheduled) — there is no provider "accept" action
+- `[E]` Cancel: customer only while pending; either side once scheduled or in progress
+- `[E]` Provider marks the job complete — provider-only, with no customer confirmation step
 - `[P]` Extended job status flow
 - `[P]` **Visits separated from jobs** — one job can have multiple visits
-- `[P]` Visit statuses: `scheduled → en_route → in_progress → done`, plus `rescheduled` / `no_show`
+- `[P]` Visit statuses: `scheduled → en_route → in_progress → done`, plus `cancelled`
 - `[P]` Reschedule a visit — either side proposes, the other confirms
 - `[P]` Extend a visit in progress when a job runs long
 - `[P]` Schedule a follow-up visit (parts unavailable, second day, revisit)
@@ -198,10 +197,17 @@ That one response feeds **six** different places in the UI:
 **Job status flow:**
 
 ```
-PENDING → QUOTED → SCHEDULED → IN_PROGRESS → COMPLETED
-   ↓         ↓          ↓            ↓
-REJECTED  DECLINED  CANCELLED    CANCELLED
+PENDING ──accept quote(C)──> SCHEDULED ──start(P)──> IN_PROGRESS ──complete(P)──> COMPLETED
+   │                              │                        │                          │
+   ├──reject(P)──> REJECTED       │                        │                    unlocks Review
+   └──cancel(C)──> CANCELLED <────┴────────────────────────┘
+                                  cancel (C or P)
 ```
+
+Six statuses: `pending`, `scheduled`, `in_progress`, `completed`, `rejected`, `cancelled`.
+
+Quote state is not a job status. It lives in `requests.price_status`
+(`none` → `proposed` → `accepted` | `declined`) and moves independently. There is no `quoted` job status.
 
 > **The key insight:** a **booking is the job**; a **visit is one time the provider shows up**. Every lifecycle question dissolves once that split exists:
 >
@@ -234,7 +240,7 @@ REJECTED  DECLINED  CANCELLED    CANCELLED
 ### 4.10 Notifications
 
 - `[E]` Push tokens stored on users (`users.push_token`)
-- `[P]` Push for: new request, accepted/rejected, quote received, quote accepted, reschedule proposed/confirmed, en route, job completed, review received
+- `[P]` Push for: new request, rejected, quote received, quote accepted, reschedule proposed/confirmed, en route, job completed, review received
 - `[P]` In-app notification centre — bell icon, unread badge
 - `[P]` Deep-link from a notification into the relevant booking
 
@@ -244,7 +250,7 @@ REJECTED  DECLINED  CANCELLED    CANCELLED
 - `[E]` One review per completed job, enforced at database level (`uq_reviews_request` + trigger)
 - `[E]` Reviews shown on provider profiles
 - `[E]` Ratings feed search sorting
-- `[P]` Review unlocked only after the customer confirms completion
+- `[P]` Review unlocked only once the provider marks the job complete
 - `[P]` Review displayed inline on the job timeline
 
 ### 4.12 Job Summary / Receipt
@@ -272,12 +278,12 @@ Two roles, one `users` table. A provider is a `users` row with a matching `provi
 
 **Customer**
 
-- Can: create requests, cancel their own pending requests, accept/decline quotes, confirm reschedules, confirm completion, review their own completed jobs.
+- Can: create requests, cancel their own pending requests, accept/decline quotes, confirm reschedules, review their own completed jobs.
 - Cannot: see other customers' requests, edit provider data, review an incomplete job.
 
 **Provider**
 
-- Can: accept/reject/quote/complete requests addressed to them; manage their own categories, bio, rates, working hours, availability; add and reschedule visits; upload after-photos.
+- Can: reject/quote/start/complete requests addressed to them; manage their own categories, bio, rates, working hours, availability; add and reschedule visits; upload after-photos.
 - Cannot: see other providers' incoming requests, edit or delete reviews.
 
 **Admin**
@@ -302,9 +308,10 @@ Two roles, one `users` table. A provider is a `users` row with a matching `provi
 
 1. **Cascade deletes.** When a provider account is deleted, `ON DELETE CASCADE` currently wipes their requests — and, with the new schema, the attached visits, events, and photos too. Should completed jobs and reviews survive as history? A soft-delete on providers is the likely answer, but this must be decided deliberately rather than inherited from default cascade behaviour.
 2. **Providers with zero categories** — should they be searchable at all? Needs an explicit rule.
-3. **`preferred_date` validation** — must be "today or later", enforced at the app layer (no DB check exists).
+3. **`requestedStart` accepts past times — deliberately.** Any well-formed, offset-free datetime is accepted, including one in the past; this is not an oversight. Rejecting past times was considered and cut for MVP scope: doing it correctly needs a timezone-aware "current time in Beirut" helper that nothing else in the codebase uses yet. If it becomes a real problem (e.g. providers receive backdated requests in practice), add it later as an isolated Zod refinement plus one helper function — it does not require touching `requestedStart`'s existing DATETIME / `Date.UTC` handling.
 4. **Stale proposal artifact:** the use-case diagram in the proposal lists "submit verification docs" for providers. Verification is **out of scope**. Treat that diagram line as stale.
 5. **Deployment** — not yet decided. Likely Expo EAS build + a small VPS or Railway/Render for the API + managed MySQL. Affects env vars, CORS, and storage for uploaded photos.
+6. **Request list pagination** — `GET /requests` returns every request for the chosen role, unpaginated and unfiltered; revisit (with server-side status filtering) if a provider's request volume grows enough to matter.
 
 ---
 
@@ -344,7 +351,7 @@ These were considered and rejected. Do not reintroduce them without an explicit 
 14a. Provider finds a corroded pipe → taps **Additional work** → revised quote $75 with reason + photo → customer approves in-app → timeline records both prices.
 14b. _Or_ the part isn't available → provider taps **Schedule follow-up** → visit #2 proposed for Thursday → customer confirms → job stays open, timeline shows Visit 1 done / Visit 2 scheduled.
 
-**Completion** 15. Provider uploads after-photos → taps **Complete** → customer confirms. 16. Marked paid in cash. 17. Customer reviews (unlocked only by completion). 18. **Job summary** screen: full timeline, both visits, price history, before/after. 19. If `service_type = 'maintenance'`: "Remind me in 6 months?"
+**Completion** 15. Provider uploads after-photos → taps **Complete** → status `COMPLETED` (provider-only; no customer confirmation step). 16. Marked paid in cash. 17. Customer reviews (unlocked only by completion). 18. **Job summary** screen: full timeline, both visits, price history, before/after. 19. If `service_type = 'maintenance'`: "Remind me in 6 months?"
 
 ---
 
@@ -364,8 +371,8 @@ These were considered and rejected. Do not reintroduce them without an explicit 
 | Quote Card / Review Quote        | Accept or decline a price         | Accept, decline                                               |
 | Review Form                      | Rate a completed job              | Submit rating + comment                                       |
 | Job Summary / Receipt            | End-of-job record                 | Share                                                         |
-| Provider Dashboard               | Incoming + active work            | Accept, reject, quote, en route, start, complete              |
-| Provider Job Brief               | Understand a job before accepting | Accept, reject, quote                                         |
+| Provider Dashboard               | Incoming + active work            | Reject, quote, en route, start, complete                      |
+| Provider Job Brief               | Understand a job before quoting   | Reject, quote                                                 |
 | Provider Quote Screen            | Set a price                       | Adjust AI range, add note, send                               |
 | Provider Visits / Schedule       | Manage visits                     | Reschedule, extend, add follow-up                             |
 | Provider Profile Edit            | Manage own profile                | Bio, categories, rates, area, hours, accepting toggle         |

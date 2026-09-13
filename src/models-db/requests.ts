@@ -1,4 +1,8 @@
-import type { PoolConnection, RowDataPacket } from "mysql2/promise";
+import type {
+  PoolConnection,
+  ResultSetHeader,
+  RowDataPacket,
+} from "mysql2/promise";
 import { pool } from "./pool";
 import { formatMysqlDateTime } from "./format-datetime";
 import type { RequestStatus } from "../constants/request-status";
@@ -127,6 +131,36 @@ export async function insertRequest(
       input.isUrgent,
     ]
   );
+}
+
+const UPDATE_STATUS_SQL = `UPDATE requests SET status = ?
+   WHERE id = ? AND status = ?`;
+
+const UPDATE_STATUS_MARK_RESPONDED_SQL = `UPDATE requests
+   SET status = ?, responded_at = COALESCE(responded_at, CURRENT_TIMESTAMP(3))
+   WHERE id = ? AND status = ?`;
+
+export interface UpdateRequestStatusInput {
+  id: string;
+  fromStatus: RequestStatus;
+  toStatus: RequestStatus;
+  // Sets responded_at only if it is still NULL — it records the provider's
+  // first response, so a later response never overwrites it.
+  markResponded: boolean;
+}
+
+// Optimistic concurrency: the row changes only if it is still in the status
+// the caller validated against. Returns false when another writer moved it
+// first, so the caller can fail instead of overwriting that transition.
+export async function updateRequestStatus(
+  conn: PoolConnection,
+  input: UpdateRequestStatusInput
+): Promise<boolean> {
+  const [result] = await conn.query<ResultSetHeader>(
+    input.markResponded ? UPDATE_STATUS_MARK_RESPONDED_SQL : UPDATE_STATUS_SQL,
+    [input.toStatus, input.id, input.fromStatus]
+  );
+  return result.affectedRows === 1;
 }
 
 export async function findRequestById(id: string): Promise<Request | null> {

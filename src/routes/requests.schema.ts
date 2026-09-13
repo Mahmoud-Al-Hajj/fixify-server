@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { SERVICE_TYPE } from "../constants/service-type";
+import { REQUEST_ACTOR_ROLE } from "../libraries/request-state-machine";
 
 const LOCAL_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/;
 const LOCAL_DATETIME_MESSAGE =
@@ -53,3 +54,15 @@ export const createRequestSchema = z.object({
   isUrgent: z.boolean().default(false),
 });
 export type CreateRequestBody = z.infer<typeof createRequestSchema>;
+
+// Strict: an unsupported or misspelled filter must fail loudly rather than
+// be dropped, or the client believes it filtered when it did not.
+export const listRequestsQuerySchema = z.strictObject({
+  role: z.enum(REQUEST_ACTOR_ROLE),
+});
+export type ListRequestsQuery = z.infer<typeof listRequestsQuerySchema>;
+
+export const requestIdParamsSchema = z.object({
+  id: z.uuid(),
+});
+export type RequestIdParams = z.infer<typeof requestIdParamsSchema>;

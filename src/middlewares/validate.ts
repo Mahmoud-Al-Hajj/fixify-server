@@ -43,3 +43,27 @@ export function validateQuery<T>(
     next();
   };
 }
+
+export type ParamsLocals<T> = { params: T };
+
+// req.params is typed string | string[] per key, so the parsed result goes on
+// res.locals, where the handler reads it with the schema's type and no cast.
+export function validateParams<T>(
+  schema: ZodType<T>
+): RequestHandler<
+  Request["params"],
+  unknown,
+  unknown,
+  Request["query"],
+  ParamsLocals<T>
+> {
+  return (req, res, next) => {
+    const result = schema.safeParse(req.params);
+    if (!result.success) {
+      next(new ValidationError(formatIssues(result.error)));
+      return;
+    }
+    res.locals.params = result.data;
+    next();
+  };
+}
