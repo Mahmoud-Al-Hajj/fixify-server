@@ -1,11 +1,13 @@
 import type { Request, Response } from "express";
 import * as requestsService from "../libraries/requests";
+import * as quotesService from "../libraries/quotes";
 import { REQUEST_ACTOR_ROLE } from "../libraries/request-state-machine";
 import { requireUser } from "../middlewares/authenticate";
 import type { QueryLocals, ParamsLocals } from "../middlewares/validate";
 import type {
   CreateRequestBody,
   ListRequestsQuery,
+  ProposeQuoteBody,
   RequestIdParams,
 } from "../routes/requests.schema";
 
@@ -61,6 +63,44 @@ export async function cancelRequestHandler(
 ): Promise<void> {
   const user = requireUser(req);
   const request = await requestsService.cancelRequest(
+    res.locals.params.id,
+    user.id
+  );
+  res.status(200).json({ request });
+}
+
+export async function proposeQuoteHandler(
+  req: Request,
+  res: Response<unknown, ParamsLocals<RequestIdParams>>
+): Promise<void> {
+  const user = requireUser(req);
+  const { price } = req.body as ProposeQuoteBody;
+  const request = await quotesService.proposeQuote(
+    res.locals.params.id,
+    user.id,
+    price
+  );
+  res.status(200).json({ request });
+}
+
+export async function declineQuoteHandler(
+  req: Request,
+  res: Response<unknown, ParamsLocals<RequestIdParams>>
+): Promise<void> {
+  const user = requireUser(req);
+  const request = await quotesService.declineQuote(
+    res.locals.params.id,
+    user.id
+  );
+  res.status(200).json({ request });
+}
+
+export async function acceptQuoteHandler(
+  req: Request,
+  res: Response<unknown, ParamsLocals<RequestIdParams>>
+): Promise<void> {
+  const user = requireUser(req);
+  const request = await quotesService.acceptQuote(
     res.locals.params.id,
     user.id
   );

@@ -62,6 +62,21 @@ export const listRequestsQuerySchema = z.strictObject({
 });
 export type ListRequestsQuery = z.infer<typeof listRequestsQuerySchema>;
 
+// DECIMAL(10,2) carried as a string end to end, never parsed to a number. The
+// digit limits cap it at 99999999.99; the second check rejects zero.
+const PRICE = /^\d{1,8}(\.\d{1,2})?$/;
+
+export const proposeQuoteSchema = z.object({
+  price: z
+    .string()
+    .regex(
+      PRICE,
+      "Price must be a decimal with at most 8 digits and 2 decimals"
+    )
+    .refine((value) => /[1-9]/.test(value), "Price must be greater than 0"),
+});
+export type ProposeQuoteBody = z.infer<typeof proposeQuoteSchema>;
+
 export const requestIdParamsSchema = z.object({
   id: z.uuid(),
 });

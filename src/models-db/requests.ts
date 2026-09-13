@@ -163,6 +163,47 @@ export async function updateRequestStatus(
   return result.affectedRows === 1;
 }
 
+const UPDATE_QUOTE_STATE_SQL = `UPDATE requests
+   SET status = ?,
+       price_status = ?,
+       price = COALESCE(?, price),
+       responded_at = IF(?, COALESCE(responded_at, CURRENT_TIMESTAMP(3)), responded_at)
+   WHERE id = ? AND status = ? AND price_status = ? AND price <=> ?`;
+
+export interface UpdateQuoteStateInput {
+  id: string;
+  fromStatus: RequestStatus;
+  toStatus: RequestStatus;
+  fromPriceStatus: PriceStatus;
+  toPriceStatus: PriceStatus;
+  // The price the caller validated against. Part of the guard because
+  // price_status alone can come back to the same value (proposed -> declined
+  // -> proposed at a new price) between the caller's read and this write.
+  fromPrice: string | null;
+  // DECIMAL(10,2) as a string; null leaves the stored price unchanged.
+  newPrice: string | null;
+  markResponded: boolean;
+}
+
+// Same optimistic-concurrency contract as updateRequestStatus: returns false
+// when the row no longer matches what the caller validated against.
+export async function updateQuoteState(
+  conn: PoolConnection,
+  input: UpdateQuoteStateInput
+): Promise<boolean> {
+  const [result] = await conn.query<ResultSetHeader>(UPDATE_QUOTE_STATE_SQL, [
+    input.toStatus,
+    input.toPriceStatus,
+    input.newPrice,
+    input.markResponded,
+    input.id,
+    input.fromStatus,
+    input.fromPriceStatus,
+    input.fromPrice,
+  ]);
+  return result.affectedRows === 1;
+}
+
 export async function findRequestById(id: string): Promise<Request | null> {
   const [rows] = await pool.query<RequestRow[]>(
     `SELECT ${REQUEST_COLUMNS} FROM requests WHERE id = ?`,

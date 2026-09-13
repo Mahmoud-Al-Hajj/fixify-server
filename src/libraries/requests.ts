@@ -75,6 +75,7 @@ export async function createRequest(
         requestId: id,
         actorUserId: input.customerId,
         eventType: JOB_EVENT_TYPE.REQUEST_CREATED,
+        payload: null,
       });
       await conn.commit();
     } catch (err) {
@@ -164,6 +165,7 @@ async function transitionRequest(input: TransitionInput): Promise<Request> {
         requestId: request.id,
         actorUserId: input.actorUserId,
         eventType: input.eventType,
+        payload: null,
       });
       await conn.commit();
     } catch (err) {

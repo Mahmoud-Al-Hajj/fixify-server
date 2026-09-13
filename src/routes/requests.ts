@@ -8,6 +8,7 @@ import {
 import {
   createRequestSchema,
   listRequestsQuerySchema,
+  proposeQuoteSchema,
   requestIdParamsSchema,
 } from "./requests.schema";
 import {
@@ -16,6 +17,9 @@ import {
   getRequestHandler,
   rejectRequestHandler,
   cancelRequestHandler,
+  proposeQuoteHandler,
+  declineQuoteHandler,
+  acceptQuoteHandler,
 } from "../controllers/requests";
 
 export const requestsRouter = Router();
@@ -46,4 +50,20 @@ requestsRouter.post(
   "/:id/cancel",
   validateParams(requestIdParamsSchema),
   cancelRequestHandler
+);
+requestsRouter.post(
+  "/:id/quote",
+  validateParams(requestIdParamsSchema),
+  validateBody(proposeQuoteSchema),
+  proposeQuoteHandler
+);
+requestsRouter.post(
+  "/:id/quote/decline",
+  validateParams(requestIdParamsSchema),
+  declineQuoteHandler
+);
+requestsRouter.post(
+  "/:id/quote/accept",
+  validateParams(requestIdParamsSchema),
+  acceptQuoteHandler
 );
