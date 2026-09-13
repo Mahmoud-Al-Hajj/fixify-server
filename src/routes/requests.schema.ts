@@ -73,6 +73,12 @@ export const proposeQuoteSchema = z.object({
 });
 export type ProposeQuoteBody = z.infer<typeof proposeQuoteSchema>;
 
+export const createReviewSchema = z.object({
+  rating: z.number().int().min(1).max(5),
+  comment: z.string().trim().min(1).max(1000).nullable().default(null),
+});
+export type CreateReviewBody = z.infer<typeof createReviewSchema>;
+
 export const requestIdParamsSchema = z.object({
   id: z.uuid(),
 });

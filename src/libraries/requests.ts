@@ -5,6 +5,7 @@ import {
   insertRequest,
   findRequestById,
   updateRequestStatus,
+  markRequestPaid as markRequestPaidModel,
   listRequestsForCustomer as listRequestsForCustomerModel,
   listRequestsForProvider as listRequestsForProviderModel,
   type Request,
@@ -22,6 +23,7 @@ import {
   type Visit,
 } from "../models-db/visits";
 import { insertJobEvent } from "../models-db/job-events";
+import { findReviewForRequest } from "../models-db/reviews";
 import { VISIT_STATUS, type VisitStatus } from "../constants/visit-status";
 import { JOB_EVENT_TYPE, type JobEventType } from "../constants/job-event-type";
 import {
@@ -122,14 +124,15 @@ export function resolveActorRole(
 export async function getRequestForActor(
   requestId: string,
   actorUserId: string
-): Promise<{ request: Request; visits: Visit[] }> {
+): Promise<{ request: Request; visits: Visit[]; hasReview: boolean }> {
   const request = await findRequestById(requestId);
   if (!request) {
     throw new NotFoundError("Request not found");
   }
   resolveActorRole(request, actorUserId);
   const visits = await findVisitsForRequest(request.id);
-  return { request, visits };
+  const review = await findReviewForRequest(request.id);
+  return { request, visits, hasReview: review !== null };
 }
 
 async function attachNextVisits(
@@ -355,6 +358,70 @@ export async function completeRequest(
       };
     },
   });
+}
+
+// Not a state transition: paid_at is an independent fact recorded after the
+// job is completed, so this doesn't go through transitionRequest or the state
+// machine. The pre-checks pick the right message; the guarded UPDATE is what
+// actually prevents a second write if two calls race.
+export async function markRequestPaid(
+  requestId: string,
+  actorUserId: string
+): Promise<Request> {
+  const request = await findRequestById(requestId);
+  if (!request) {
+    throw new NotFoundError("Request not found");
+  }
+  const actorRole = resolveActorRole(request, actorUserId);
+  if (actorRole !== REQUEST_ACTOR_ROLE.PROVIDER) {
+    throw new ForbiddenError("Only the provider can mark a request as paid");
+  }
+  if (request.status !== REQUEST_STATUS.COMPLETED) {
+    throw new ConflictError(
+      "A request can only be marked paid once it is completed"
+    );
+  }
+  if (request.paidAt !== null) {
+    throw new ConflictError("This request is already marked as paid");
+  }
+  const price = request.price;
+  if (price === null) {
+    throw new Error("A completed request has no price");
+  }
+
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    try {
+      const updated = await markRequestPaidModel(
+        conn,
+        request.id,
+        REQUEST_STATUS.COMPLETED
+      );
+      if (!updated) {
+        throw new ConflictError(CHANGED_CONCURRENTLY_MESSAGE);
+      }
+      await insertJobEvent(conn, {
+        id: randomUUID(),
+        requestId: request.id,
+        actorUserId,
+        eventType: JOB_EVENT_TYPE.REQUEST_PAID,
+        payload: { price },
+      });
+      await conn.commit();
+    } catch (err) {
+      await conn.rollback();
+      throw err;
+    }
+  } finally {
+    conn.release();
+  }
+
+  const paid = await findRequestById(request.id);
+  if (!paid) {
+    throw new Error("Request was marked paid but could not be re-read");
+  }
+  return paid;
 }
 
 export async function listRequestsForCustomer(

@@ -1,12 +1,14 @@
 import type { Request, Response } from "express";
 import * as requestsService from "../libraries/requests";
 import * as quotesService from "../libraries/quotes";
+import * as reviewsService from "../libraries/reviews";
 import { REQUEST_ACTOR_ROLE } from "../libraries/request-state-machine";
 import { requireUser } from "../middlewares/authenticate";
 import type { QueryLocals, ParamsLocals } from "../middlewares/validate";
 import type { Visit } from "../models-db/visits";
 import type {
   CreateRequestBody,
+  CreateReviewBody,
   ListRequestsQuery,
   ProposeQuoteBody,
   RequestIdParams,
@@ -110,6 +112,18 @@ export async function completeRequestHandler(
   res.status(200).json({ request });
 }
 
+export async function markRequestPaidHandler(
+  req: Request,
+  res: Response<unknown, ParamsLocals<RequestIdParams>>
+): Promise<void> {
+  const user = requireUser(req);
+  const request = await requestsService.markRequestPaid(
+    res.locals.params.id,
+    user.id
+  );
+  res.status(200).json({ request });
+}
+
 export async function proposeQuoteHandler(
   req: Request,
   res: Response<unknown, ParamsLocals<RequestIdParams>>
@@ -153,11 +167,23 @@ export async function getRequestHandler(
   res: Response<unknown, ParamsLocals<RequestIdParams>>
 ): Promise<void> {
   const user = requireUser(req);
-  const { request, visits } = await requestsService.getRequestForActor(
-    res.locals.params.id,
-    user.id
-  );
+  const { request, visits, hasReview } =
+    await requestsService.getRequestForActor(res.locals.params.id, user.id);
   res.status(200).json({
-    request: { ...request, visits: visits.map(toVisitView) },
+    request: { ...request, visits: visits.map(toVisitView), hasReview },
   });
+}
+
+export async function createReviewHandler(
+  req: Request,
+  res: Response<unknown, ParamsLocals<RequestIdParams>>
+): Promise<void> {
+  const user = requireUser(req);
+  const { rating, comment } = req.body as CreateReviewBody;
+  const review = await reviewsService.createReview(
+    res.locals.params.id,
+    user.id,
+    { rating, comment }
+  );
+  res.status(201).json({ review });
 }

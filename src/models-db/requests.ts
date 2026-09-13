@@ -166,6 +166,22 @@ export async function updateRequestStatus(
   return result.affectedRows === 1;
 }
 
+// One guarded statement: it applies only if the request is still in the
+// required status and not yet paid, so a concurrent mark-paid can't write
+// paid_at twice. Returns false when the guard no longer matches.
+export async function markRequestPaid(
+  conn: PoolConnection,
+  id: string,
+  requiredStatus: RequestStatus
+): Promise<boolean> {
+  const [result] = await conn.query<ResultSetHeader>(
+    `UPDATE requests SET paid_at = CURRENT_TIMESTAMP(3)
+     WHERE id = ? AND status = ? AND paid_at IS NULL`,
+    [id, requiredStatus]
+  );
+  return result.affectedRows === 1;
+}
+
 const UPDATE_QUOTE_STATE_SQL = `UPDATE requests
    SET status = ?,
        price_status = ?,

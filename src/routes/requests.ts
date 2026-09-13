@@ -7,6 +7,7 @@ import {
 } from "../middlewares/validate";
 import {
   createRequestSchema,
+  createReviewSchema,
   listRequestsQuerySchema,
   proposeQuoteSchema,
   requestIdParamsSchema,
@@ -19,9 +20,11 @@ import {
   cancelRequestHandler,
   startRequestHandler,
   completeRequestHandler,
+  markRequestPaidHandler,
   proposeQuoteHandler,
   declineQuoteHandler,
   acceptQuoteHandler,
+  createReviewHandler,
 } from "../controllers/requests";
 
 export const requestsRouter = Router();
@@ -64,6 +67,11 @@ requestsRouter.post(
   completeRequestHandler
 );
 requestsRouter.post(
+  "/:id/mark-paid",
+  validateParams(requestIdParamsSchema),
+  markRequestPaidHandler
+);
+requestsRouter.post(
   "/:id/quote",
   validateParams(requestIdParamsSchema),
   validateBody(proposeQuoteSchema),
@@ -78,4 +86,10 @@ requestsRouter.post(
   "/:id/quote/accept",
   validateParams(requestIdParamsSchema),
   acceptQuoteHandler
+);
+requestsRouter.post(
+  "/:id/review",
+  validateParams(requestIdParamsSchema),
+  validateBody(createReviewSchema),
+  createReviewHandler
 );

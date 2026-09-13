@@ -94,6 +94,67 @@ export async function findProviderProfile(
   return row ? { ...mapSummaryRow(row), bio: row.bio } : null;
 }
 
+export interface ProviderProfileChanges {
+  isAccepting?: boolean;
+  bio?: string | null;
+  yearsExperience?: number | null;
+  area?: string | null;
+}
+
+// A field that is absent stays unchanged; null clears it. COALESCE can't tell
+// those apart, so the SET list is assembled from these fixed fragments — only
+// the fragments come from code, every value is a parameter.
+const PROFILE_CHANGE_FRAGMENTS: ReadonlyArray<
+  [keyof ProviderProfileChanges, string]
+> = [
+  ["isAccepting", "is_accepting = ?"],
+  ["bio", "bio = ?"],
+  ["yearsExperience", "years_experience = ?"],
+  ["area", "area = ?"],
+];
+
+export async function updateProviderProfile(
+  providerId: string,
+  changes: ProviderProfileChanges
+): Promise<void> {
+  const fragments: string[] = [];
+  const values: Array<string | number | boolean | null> = [];
+  for (const [field, fragment] of PROFILE_CHANGE_FRAGMENTS) {
+    const value = changes[field];
+    if (value !== undefined) {
+      fragments.push(fragment);
+      values.push(value);
+    }
+  }
+  if (fragments.length === 0) return;
+  await pool.query(
+    `UPDATE providers SET ${fragments.join(", ")} WHERE id = ?`,
+    [...values, providerId]
+  );
+}
+
+// Replaces the provider's category set in one transaction. Rows for categories
+// that stay are left in place (keeping their base_rate); only removed ones are
+// deleted and only new ones inserted. The upsert makes a concurrent replace
+// that already inserted the same row harmless, without INSERT IGNORE's habit
+// of also hiding foreign-key errors.
+export async function replaceProviderCategories(
+  conn: PoolConnection,
+  providerId: string,
+  categoryIds: readonly number[]
+): Promise<void> {
+  await conn.query(
+    `DELETE FROM provider_categories
+     WHERE provider_id = ? AND category_id NOT IN (?)`,
+    [providerId, categoryIds]
+  );
+  await conn.query(
+    `INSERT INTO provider_categories (provider_id, category_id) VALUES ?
+     ON DUPLICATE KEY UPDATE category_id = category_id`,
+    [categoryIds.map((categoryId) => [providerId, categoryId])]
+  );
+}
+
 // Served by the provider_categories primary key (provider_id, category_id).
 export async function listCategoriesForProvider(
   providerId: string
