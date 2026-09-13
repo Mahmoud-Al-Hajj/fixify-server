@@ -69,6 +69,30 @@ export async function cancelRequestHandler(
   res.status(200).json({ request });
 }
 
+export async function startRequestHandler(
+  req: Request,
+  res: Response<unknown, ParamsLocals<RequestIdParams>>
+): Promise<void> {
+  const user = requireUser(req);
+  const request = await requestsService.startRequest(
+    res.locals.params.id,
+    user.id
+  );
+  res.status(200).json({ request });
+}
+
+export async function completeRequestHandler(
+  req: Request,
+  res: Response<unknown, ParamsLocals<RequestIdParams>>
+): Promise<void> {
+  const user = requireUser(req);
+  const request = await requestsService.completeRequest(
+    res.locals.params.id,
+    user.id
+  );
+  res.status(200).json({ request });
+}
+
 export async function proposeQuoteHandler(
   req: Request,
   res: Response<unknown, ParamsLocals<RequestIdParams>>

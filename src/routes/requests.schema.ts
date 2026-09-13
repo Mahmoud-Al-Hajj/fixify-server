@@ -47,8 +47,8 @@ export const createRequestSchema = z.object({
   estimatedDurationMinutes: z
     .number()
     .int()
-    .positive()
-    .max(65535)
+    .min(15)
+    .max(1440)
     .nullable()
     .default(null),
   isUrgent: z.boolean().default(false),

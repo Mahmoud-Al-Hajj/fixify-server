@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { PoolConnection } from "mysql2/promise";
 import { pool } from "../models-db/pool";
 import {
   insertRequest,
@@ -13,7 +14,14 @@ import {
   findProviderAcceptance,
   providerAcceptsCategory,
 } from "../models-db/providers";
+import {
+  findVisitsForRequest,
+  updateVisitStatus,
+  cancelOpenVisitsForRequest,
+  type Visit,
+} from "../models-db/visits";
 import { insertJobEvent } from "../models-db/job-events";
+import { VISIT_STATUS, type VisitStatus } from "../constants/visit-status";
 import { JOB_EVENT_TYPE, type JobEventType } from "../constants/job-event-type";
 import {
   REQUEST_STATUS,
@@ -31,6 +39,10 @@ import {
   assertRequestTransition,
   type RequestActorRole,
 } from "./request-state-machine";
+import {
+  OPEN_VISIT_STATUSES,
+  assertVisitTransition,
+} from "./visit-state-machine";
 
 export type CreateRequestInput = Omit<InsertRequestInput, "id">;
 
@@ -118,15 +130,29 @@ export async function getRequestForActor(
   return request;
 }
 
+const CHANGED_CONCURRENTLY_MESSAGE =
+  "Request was changed by another action; reload it and try again";
+
+interface TransitionSideEffects {
+  eventPayload: Readonly<Record<string, string>> | null;
+  // Runs inside the transaction after the conditional request update, so the
+  // request row is already locked when visits are touched. Every transition
+  // takes that lock first, which is what serialises e.g. a start racing a
+  // cancel on the same request.
+  applyVisitChanges?: (conn: PoolConnection) => Promise<void>;
+}
+
 interface TransitionInput {
   requestId: string;
   actorUserId: string;
   targetStatus: RequestStatus;
   eventType: JobEventType;
   markResponded: boolean;
-  // Narrower than the state machine where an action is not yet safe from
-  // every status it allows. Omitted when the state machine is the only limit.
-  permittedFromStatuses?: readonly RequestStatus[];
+  markCompleted: boolean;
+  // Runs after the request transition is validated and before the
+  // transaction opens, so a visit-state problem is reported without writing
+  // anything. Omitted when the action touches no visits and has no payload.
+  prepare?: (request: Request) => Promise<TransitionSideEffects>;
 }
 
 async function transitionRequest(input: TransitionInput): Promise<Request> {
@@ -136,14 +162,9 @@ async function transitionRequest(input: TransitionInput): Promise<Request> {
   }
   const actorRole = resolveActorRole(request, input.actorUserId);
   assertRequestTransition(request.status, input.targetStatus, actorRole);
-  if (
-    input.permittedFromStatuses &&
-    !input.permittedFromStatuses.includes(request.status)
-  ) {
-    throw new InvalidTransitionError(
-      `Cannot transition request from '${request.status}' to '${input.targetStatus}'`
-    );
-  }
+  const sideEffects: TransitionSideEffects = input.prepare
+    ? await input.prepare(request)
+    : { eventPayload: null };
 
   const conn = await pool.getConnection();
   try {
@@ -154,18 +175,20 @@ async function transitionRequest(input: TransitionInput): Promise<Request> {
         fromStatus: request.status,
         toStatus: input.targetStatus,
         markResponded: input.markResponded,
+        markCompleted: input.markCompleted,
       });
       if (!updated) {
-        throw new InvalidTransitionError(
-          "Request was changed by another action; reload it and try again"
-        );
+        throw new InvalidTransitionError(CHANGED_CONCURRENTLY_MESSAGE);
+      }
+      if (sideEffects.applyVisitChanges) {
+        await sideEffects.applyVisitChanges(conn);
       }
       await insertJobEvent(conn, {
         id: randomUUID(),
         requestId: request.id,
         actorUserId: input.actorUserId,
         eventType: input.eventType,
-        payload: null,
+        payload: sideEffects.eventPayload,
       });
       await conn.commit();
     } catch (err) {
@@ -193,6 +216,7 @@ export async function rejectRequest(
     targetStatus: REQUEST_STATUS.REJECTED,
     eventType: JOB_EVENT_TYPE.REQUEST_REJECTED,
     markResponded: true,
+    markCompleted: false,
   });
 }
 
@@ -206,10 +230,107 @@ export async function cancelRequest(
     targetStatus: REQUEST_STATUS.CANCELLED,
     eventType: JOB_EVENT_TYPE.REQUEST_CANCELLED,
     markResponded: false,
-    // Pending only until visits exist: cancelling a scheduled or in-progress
-    // job must also cancel its visits to release their booked slots. Lift
-    // this restriction when that is built.
-    permittedFromStatuses: [REQUEST_STATUS.PENDING],
+    markCompleted: false,
+    // Every open visit is cancelled with the request, which releases its
+    // slot. A pending request has no visits, so this is a no-op there.
+    prepare: async (request) => ({
+      eventPayload: { from: request.status },
+      applyVisitChanges: (conn) =>
+        cancelOpenVisitsForRequest(conn, request.id, OPEN_VISIT_STATUSES),
+    }),
+  });
+}
+
+async function applyVisitTransition(
+  conn: PoolConnection,
+  visit: Visit,
+  toStatus: VisitStatus,
+  markActualStart: boolean
+): Promise<void> {
+  const updated = await updateVisitStatus(conn, {
+    id: visit.id,
+    fromStatus: visit.status,
+    toStatus,
+    markActualStart,
+  });
+  if (!updated) {
+    throw new InvalidTransitionError(CHANGED_CONCURRENTLY_MESSAGE);
+  }
+}
+
+export async function startRequest(
+  requestId: string,
+  actorUserId: string
+): Promise<Request> {
+  return transitionRequest({
+    requestId,
+    actorUserId,
+    targetStatus: REQUEST_STATUS.IN_PROGRESS,
+    eventType: JOB_EVENT_TYPE.REQUEST_STARTED,
+    markResponded: false,
+    markCompleted: false,
+    prepare: async (request) => {
+      // Visits come back ordered by scheduled_start, so this is the earliest
+      // visit still waiting to start.
+      const visit = (await findVisitsForRequest(request.id)).find(
+        (candidate) =>
+          candidate.status === VISIT_STATUS.SCHEDULED ||
+          candidate.status === VISIT_STATUS.EN_ROUTE
+      );
+      if (!visit) {
+        throw new ConflictError("This request has no scheduled visit to start");
+      }
+      assertVisitTransition(visit.status, VISIT_STATUS.IN_PROGRESS);
+      return {
+        eventPayload: { visitId: visit.id },
+        applyVisitChanges: (conn) =>
+          applyVisitTransition(conn, visit, VISIT_STATUS.IN_PROGRESS, true),
+      };
+    },
+  });
+}
+
+export async function completeRequest(
+  requestId: string,
+  actorUserId: string
+): Promise<Request> {
+  return transitionRequest({
+    requestId,
+    actorUserId,
+    targetStatus: REQUEST_STATUS.COMPLETED,
+    eventType: JOB_EVENT_TYPE.REQUEST_COMPLETED,
+    markResponded: false,
+    markCompleted: true,
+    prepare: async (request) => {
+      const visits = await findVisitsForRequest(request.id);
+      const inProgress = visits.filter(
+        (candidate) => candidate.status === VISIT_STATUS.IN_PROGRESS
+      );
+      const visit = inProgress[0];
+      if (!visit || inProgress.length > 1) {
+        throw new ConflictError(
+          "A request can only be completed with exactly one visit in progress"
+        );
+      }
+      // Other open visits (e.g. a scheduled follow-up) block completion
+      // rather than being cancelled silently.
+      const otherOpen = visits.some(
+        (candidate) =>
+          candidate.id !== visit.id &&
+          OPEN_VISIT_STATUSES.includes(candidate.status)
+      );
+      if (otherOpen) {
+        throw new ConflictError(
+          "This request still has other open visits; finish or cancel them before completing it"
+        );
+      }
+      assertVisitTransition(visit.status, VISIT_STATUS.DONE);
+      return {
+        eventPayload: { visitId: visit.id },
+        applyVisitChanges: (conn) =>
+          applyVisitTransition(conn, visit, VISIT_STATUS.DONE, false),
+      };
+    },
   });
 }
 

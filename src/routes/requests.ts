@@ -17,6 +17,8 @@ import {
   getRequestHandler,
   rejectRequestHandler,
   cancelRequestHandler,
+  startRequestHandler,
+  completeRequestHandler,
   proposeQuoteHandler,
   declineQuoteHandler,
   acceptQuoteHandler,
@@ -50,6 +52,16 @@ requestsRouter.post(
   "/:id/cancel",
   validateParams(requestIdParamsSchema),
   cancelRequestHandler
+);
+requestsRouter.post(
+  "/:id/start",
+  validateParams(requestIdParamsSchema),
+  startRequestHandler
+);
+requestsRouter.post(
+  "/:id/complete",
+  validateParams(requestIdParamsSchema),
+  completeRequestHandler
 );
 requestsRouter.post(
   "/:id/quote",

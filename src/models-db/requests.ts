@@ -133,11 +133,10 @@ export async function insertRequest(
   );
 }
 
-const UPDATE_STATUS_SQL = `UPDATE requests SET status = ?
-   WHERE id = ? AND status = ?`;
-
-const UPDATE_STATUS_MARK_RESPONDED_SQL = `UPDATE requests
-   SET status = ?, responded_at = COALESCE(responded_at, CURRENT_TIMESTAMP(3))
+const UPDATE_STATUS_SQL = `UPDATE requests
+   SET status = ?,
+       responded_at = IF(?, COALESCE(responded_at, CURRENT_TIMESTAMP(3)), responded_at),
+       completed_at = IF(?, CURRENT_TIMESTAMP(3), completed_at)
    WHERE id = ? AND status = ?`;
 
 export interface UpdateRequestStatusInput {
@@ -147,6 +146,7 @@ export interface UpdateRequestStatusInput {
   // Sets responded_at only if it is still NULL — it records the provider's
   // first response, so a later response never overwrites it.
   markResponded: boolean;
+  markCompleted: boolean;
 }
 
 // Optimistic concurrency: the row changes only if it is still in the status
@@ -156,10 +156,13 @@ export async function updateRequestStatus(
   conn: PoolConnection,
   input: UpdateRequestStatusInput
 ): Promise<boolean> {
-  const [result] = await conn.query<ResultSetHeader>(
-    input.markResponded ? UPDATE_STATUS_MARK_RESPONDED_SQL : UPDATE_STATUS_SQL,
-    [input.toStatus, input.id, input.fromStatus]
-  );
+  const [result] = await conn.query<ResultSetHeader>(UPDATE_STATUS_SQL, [
+    input.toStatus,
+    input.markResponded,
+    input.markCompleted,
+    input.id,
+    input.fromStatus,
+  ]);
   return result.affectedRows === 1;
 }
 

@@ -86,9 +86,17 @@ not add one — it would be a second source of truth for the same fact.
 ### Visit lifecycle
 
 ```
-SCHEDULED ──> EN_ROUTE ──> IN_PROGRESS ──> DONE
-     └────────────────────────────────> CANCELLED
+SCHEDULED ─────────start(P)────────> IN_PROGRESS ──complete(P)──> DONE
+   │  └──> EN_ROUTE ──────────────────────┘    │
+   │          │                                │
+   └──────────┴─────────── cancel ─────────────┴──> CANCELLED
 ```
+
+Starting a job moves the visit straight from `SCHEDULED` to `IN_PROGRESS`. `EN_ROUTE`
+("On my way") is a Phase 4 addition to be layered on top of this later; nothing moves a
+visit into it yet, and nothing is designed around it. Cancelling a request cancels every
+visit that is not yet `DONE` or `CANCELLED`, which releases its slot (`active_slot`
+becomes NULL).
 
 A reschedule updates the visit row in place (`proposed_start` / `proposed_by`, then
 confirmed by the other party). There is no `rescheduled` status — the history lives in

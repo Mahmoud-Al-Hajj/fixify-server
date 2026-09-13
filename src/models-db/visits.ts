@@ -1,5 +1,93 @@
-import type { PoolConnection } from "mysql2/promise";
+import type {
+  PoolConnection,
+  ResultSetHeader,
+  RowDataPacket,
+} from "mysql2/promise";
+import { pool } from "./pool";
+import { formatMysqlDateTime } from "./format-datetime";
 import { ConflictError } from "../constants/errors";
+import { VISIT_STATUS, type VisitStatus } from "../constants/visit-status";
+
+// Beirut wall-clock, no offset. See pool.ts for the schema-wide convention.
+export interface Visit {
+  id: string;
+  requestId: string;
+  providerId: string;
+  status: VisitStatus;
+  scheduledStart: string;
+  scheduledEnd: string;
+  actualStart: string | null;
+}
+
+interface VisitRow extends RowDataPacket {
+  id: string;
+  request_id: string;
+  provider_id: string;
+  status: string;
+  scheduled_start: string;
+  scheduled_end: string;
+  actual_start: string | null;
+}
+
+function mapRow(row: VisitRow): Visit {
+  return {
+    id: row.id,
+    requestId: row.request_id,
+    providerId: row.provider_id,
+    status: row.status as VisitStatus,
+    scheduledStart: formatMysqlDateTime(row.scheduled_start),
+    scheduledEnd: formatMysqlDateTime(row.scheduled_end),
+    actualStart: formatMysqlDateTime(row.actual_start),
+  };
+}
+
+// Served by the index backing fk_visits_request (request_id, provider_id).
+export async function findVisitsForRequest(
+  requestId: string
+): Promise<Visit[]> {
+  const [rows] = await pool.query<VisitRow[]>(
+    `SELECT id, request_id, provider_id, status, scheduled_start,
+            scheduled_end, actual_start
+     FROM visits WHERE request_id = ? ORDER BY scheduled_start ASC`,
+    [requestId]
+  );
+  return rows.map(mapRow);
+}
+
+export interface UpdateVisitStatusInput {
+  id: string;
+  fromStatus: VisitStatus;
+  toStatus: VisitStatus;
+  markActualStart: boolean;
+}
+
+// Optimistic concurrency, same contract as updateRequestStatus: returns false
+// when the visit is no longer in the status the caller validated against.
+export async function updateVisitStatus(
+  conn: PoolConnection,
+  input: UpdateVisitStatusInput
+): Promise<boolean> {
+  const [result] = await conn.query<ResultSetHeader>(
+    `UPDATE visits
+     SET status = ?, actual_start = IF(?, CURRENT_TIMESTAMP(3), actual_start)
+     WHERE id = ? AND status = ?`,
+    [input.toStatus, input.markActualStart, input.id, input.fromStatus]
+  );
+  return result.affectedRows === 1;
+}
+
+// Cancelling releases each visit's slot: active_slot is generated as NULL for
+// cancelled visits, and NULLs never collide in uq_visits_provider_active_slot.
+export async function cancelOpenVisitsForRequest(
+  conn: PoolConnection,
+  requestId: string,
+  openStatuses: readonly VisitStatus[]
+): Promise<void> {
+  await conn.query(
+    `UPDATE visits SET status = ? WHERE request_id = ? AND status IN (?)`,
+    [VISIT_STATUS.CANCELLED, requestId, openStatuses]
+  );
+}
 
 export interface InsertVisitInput {
   id: string;

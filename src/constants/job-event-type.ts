@@ -2,6 +2,8 @@ export const JOB_EVENT_TYPE = {
   REQUEST_CREATED: "request_created",
   REQUEST_REJECTED: "request_rejected",
   REQUEST_CANCELLED: "request_cancelled",
+  REQUEST_STARTED: "request_started",
+  REQUEST_COMPLETED: "request_completed",
   QUOTE_PROPOSED: "quote_proposed",
   QUOTE_ACCEPTED: "quote_accepted",
   QUOTE_DECLINED: "quote_declined",
