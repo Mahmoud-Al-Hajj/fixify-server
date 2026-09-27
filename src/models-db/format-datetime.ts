@@ -26,31 +26,13 @@ export function wallClockToDate(formatted: string): Date {
   );
 }
 
-const BEIRUT_CLOCK = new Intl.DateTimeFormat("en-CA", {
-  timeZone: "Asia/Beirut",
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-  second: "2-digit",
-  hourCycle: "h23",
-});
-
 // The current Beirut wall-clock time, built with Date.UTC like every other
-// wall-clock Date, so it compares directly against one.
+// wall-clock Date, so it compares directly against one. sv-SE formats as
+// "YYYY-MM-DD HH:mm:ss".
 export function beirutNow(): Date {
-  const parts = BEIRUT_CLOCK.formatToParts(new Date());
-  const part = (type: Intl.DateTimeFormatPartTypes) =>
-    Number(parts.find((p) => p.type === type)?.value);
-  return new Date(
-    Date.UTC(
-      part("year"),
-      part("month") - 1,
-      part("day"),
-      part("hour"),
-      part("minute"),
-      part("second")
-    )
+  return wallClockToDate(
+    new Date()
+      .toLocaleString("sv-SE", { timeZone: "Asia/Beirut" })
+      .replace(" ", "T")
   );
 }
