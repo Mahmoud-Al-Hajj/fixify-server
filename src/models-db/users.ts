@@ -1,7 +1,6 @@
 import type { RowDataPacket } from "mysql2/promise";
 import type { PoolConnection } from "mysql2/promise";
 import { pool } from "./pool";
-import { formatMysqlDateTime } from "./format-datetime";
 
 export interface PublicUser {
   id: string;
@@ -12,24 +11,6 @@ export interface PublicUser {
   isProvider: boolean;
 }
 
-export interface UserCredentials {
-  id: string;
-  fullName: string;
-  email: string;
-  phone: string;
-  avatarUrl: string | null;
-  passwordHash: string;
-}
-
-interface UserCredentialsRow extends RowDataPacket {
-  id: string;
-  full_name: string;
-  email: string;
-  phone: string;
-  avatar_url: string | null;
-  password_hash: string;
-}
-
 interface PublicUserRow extends RowDataPacket {
   id: string;
   full_name: string;
@@ -37,11 +18,6 @@ interface PublicUserRow extends RowDataPacket {
   phone: string;
   avatar_url: string | null;
   is_provider: number;
-}
-
-interface ResetTokenRow extends RowDataPacket {
-  id: string;
-  reset_expires_at: string;
 }
 
 export async function insertUser(
@@ -61,24 +37,20 @@ export async function insertUser(
   );
 }
 
+interface CredentialsRow extends RowDataPacket {
+  id: string;
+  password_hash: string;
+}
+
 export async function findUserCredentialsByEmail(
   email: string
-): Promise<UserCredentials | null> {
-  const [rows] = await pool.query<UserCredentialsRow[]>(
-    `SELECT id, full_name, email, phone, avatar_url, password_hash
-     FROM users WHERE email = ?`,
+): Promise<{ id: string; passwordHash: string } | null> {
+  const [rows] = await pool.query<CredentialsRow[]>(
+    `SELECT id, password_hash FROM users WHERE email = ?`,
     [email]
   );
   const row = rows[0];
-  if (!row) return null;
-  return {
-    id: row.id,
-    fullName: row.full_name,
-    email: row.email,
-    phone: row.phone,
-    avatarUrl: row.avatar_url,
-    passwordHash: row.password_hash,
-  };
+  return row ? { id: row.id, passwordHash: row.password_hash } : null;
 }
 
 export async function findPublicUserById(
@@ -163,20 +135,20 @@ export async function setPasswordResetToken(
   );
 }
 
-export async function findUserByResetTokenHash(
+interface IdRow extends RowDataPacket {
+  id: string;
+}
+
+export async function findUserIdByResetTokenHash(
   tokenHash: string
-): Promise<{ id: string; resetExpiresAt: string } | null> {
-  const [rows] = await pool.query<ResetTokenRow[]>(
-    `SELECT id, reset_expires_at FROM users
+): Promise<string | null> {
+  const [rows] = await pool.query<IdRow[]>(
+    `SELECT id FROM users
      WHERE reset_token_hash = ? AND reset_expires_at > UTC_TIMESTAMP(3)`,
     [tokenHash]
   );
   const row = rows[0];
-  if (!row) return null;
-  return {
-    id: row.id,
-    resetExpiresAt: formatMysqlDateTime(row.reset_expires_at),
-  };
+  return row ? row.id : null;
 }
 
 export async function updatePasswordAndClearResetToken(

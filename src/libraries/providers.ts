@@ -18,7 +18,6 @@ import {
   type Review,
 } from "../models-db/reviews";
 import type { Category } from "../models-db/categories";
-import { REQUEST_STATUS } from "../constants/request-status";
 import {
   NotFoundError,
   ForbiddenError,
@@ -36,8 +35,7 @@ export async function listProvidersByCategory(
 ): Promise<Array<{ provider: ProviderSummary; rating: RatingSummary }>> {
   const providers = await listProvidersByCategoryModel(categoryId, isAccepting);
   const ratings = await findRatingSummariesForProviders(
-    providers.map((provider) => provider.id),
-    REQUEST_STATUS.COMPLETED
+    providers.map((provider) => provider.id)
   );
   return providers.map((provider) => ({
     provider,
@@ -61,13 +59,9 @@ export async function getProviderProfile(
     throw new NotFoundError("Provider not found");
   }
   const categories = await listCategoriesForProvider(providerId);
-  const ratings = await findRatingSummariesForProviders(
-    [providerId],
-    REQUEST_STATUS.COMPLETED
-  );
+  const ratings = await findRatingSummariesForProviders([providerId]);
   const reviews = await listRecentReviewsForProvider(
     providerId,
-    REQUEST_STATUS.COMPLETED,
     PROFILE_REVIEW_LIMIT
   );
   return {

@@ -193,19 +193,6 @@ export async function insertProvider(
   );
 }
 
-export async function insertProviderCategories(
-  conn: PoolConnection,
-  providerId: string,
-  categoryIds: readonly number[]
-): Promise<void> {
-  if (categoryIds.length === 0) return;
-  const values = categoryIds.map((categoryId) => [providerId, categoryId]);
-  await conn.query(
-    `INSERT INTO provider_categories (provider_id, category_id) VALUES ?`,
-    [values]
-  );
-}
-
 interface ProviderAcceptanceRow extends RowDataPacket {
   is_accepting: number;
 }

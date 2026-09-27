@@ -5,13 +5,13 @@ import {
   findUserCredentialsByEmail,
   findPublicUserById,
   setPasswordResetToken,
-  findUserByResetTokenHash,
+  findUserIdByResetTokenHash,
   updatePasswordAndClearResetToken,
   type PublicUser,
 } from "../models-db/users";
 import {
   insertProvider,
-  insertProviderCategories,
+  replaceProviderCategories,
 } from "../models-db/providers";
 import { findCategoryIds } from "../models-db/categories";
 import { hashPassword, verifyPassword } from "./password";
@@ -73,7 +73,7 @@ export async function register(
           bio: input.becomeProvider.bio ?? null,
           yearsExperience: input.becomeProvider.yearsExperience ?? null,
         });
-        await insertProviderCategories(conn, id, categoryIds);
+        await replaceProviderCategories(conn, id, categoryIds);
       }
     });
   } catch (err) {
@@ -131,11 +131,11 @@ export async function resetPassword(
   newPassword: string
 ): Promise<void> {
   const tokenHash = createHash("sha256").update(rawToken).digest("hex");
-  const match = await findUserByResetTokenHash(tokenHash);
-  if (!match) {
+  const userId = await findUserIdByResetTokenHash(tokenHash);
+  if (!userId) {
     throw new UnauthorizedError("Invalid or expired reset token");
   }
 
   const passwordHash = await hashPassword(newPassword);
-  await updatePasswordAndClearResetToken(match.id, passwordHash);
+  await updatePasswordAndClearResetToken(userId, passwordHash);
 }

@@ -2,7 +2,6 @@ import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { pool, isDbError } from "./pool";
 import { formatMysqlDateTime } from "./format-datetime";
 import { ConflictError } from "../constants/errors";
-import type { RequestStatus } from "../constants/request-status";
 
 export interface Review {
   id: string;
@@ -89,12 +88,11 @@ export async function findReviewForRequest(
   return row ? mapReviewRow(row) : null;
 }
 
-// One query for any number of providers. Reviews reach a provider through
-// their completed requests: served by idx_req_provider_status
-// (provider_id, status) and then uq_reviews_request.
+// One query for any number of providers. Only completed requests carry
+// reviews (trg_reviews_completed). Served by idx_req_provider_status
+// (provider_id prefix) and then uq_reviews_request.
 export async function findRatingSummariesForProviders(
-  providerIds: readonly string[],
-  completedStatus: RequestStatus
+  providerIds: readonly string[]
 ): Promise<Map<string, RatingSummary>> {
   const summaries = new Map<string, RatingSummary>();
   if (providerIds.length === 0) return summaries;
@@ -103,9 +101,9 @@ export async function findRatingSummariesForProviders(
             ROUND(AVG(rv.rating), 2) AS average_rating
      FROM requests r
      JOIN reviews rv ON rv.request_id = r.id
-     WHERE r.provider_id IN (?) AND r.status = ?
+     WHERE r.provider_id IN (?)
      GROUP BY r.provider_id`,
-    [providerIds, completedStatus]
+    [providerIds]
   );
   for (const row of rows) {
     summaries.set(row.provider_id, {
@@ -118,17 +116,16 @@ export async function findRatingSummariesForProviders(
 
 export async function listRecentReviewsForProvider(
   providerId: string,
-  completedStatus: RequestStatus,
   limit: number
 ): Promise<Review[]> {
   const [rows] = await pool.query<ReviewRow[]>(
     `SELECT rv.id, rv.request_id, rv.rating, rv.comment, rv.created_at
      FROM requests r
      JOIN reviews rv ON rv.request_id = r.id
-     WHERE r.provider_id = ? AND r.status = ?
+     WHERE r.provider_id = ?
      ORDER BY rv.created_at DESC, rv.id
      LIMIT ?`,
-    [providerId, completedStatus, limit]
+    [providerId, limit]
   );
   return rows.map(mapReviewRow);
 }
