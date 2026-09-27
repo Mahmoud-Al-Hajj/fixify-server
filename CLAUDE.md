@@ -132,6 +132,14 @@ is created.
 quote happens while the job is already `in_progress`. There is no `quoted` job status. Do
 not add one — it would be a second source of truth for the same fact.
 
+**Revised quotes.** While a job is `in_progress` the provider may propose a new price, with
+a reason. It waits in `requests.revised_price`; meanwhile `price` keeps the agreed amount
+and `price_status` is `proposed`. Accepting copies `revised_price` into `price` and clears
+it; declining just clears it. Both return `price_status` to `accepted`. A job cannot be
+completed while a revision is waiting (the completing UPDATE checks it). The agreed price
+is always `requests.price`: never derive or restore a price from `job_events`, which are
+an audit trail only.
+
 ### Visit lifecycle
 
 ```
@@ -340,13 +348,27 @@ options laid out.
   `intake_photos.id` are `BIGINT` auto-increment (so conversation turns keep a reliable
   order — order messages by `id`, not `created_at`). Type them accordingly.
 
-Every DATETIME in this schema holds Beirut wall-clock digits with
-no offset, EXCEPT users.reset_expires_at, which is a true UTC
-instant written from Date.now() and compared against
-UTC_TIMESTAMP(3) in SQL. The pool sets dateStrings: true, so reads
-return strings; models pass them through formatMysqlDateTime. The
-write path still encodes Dates via UTC getters — a Date written to
-a wall-clock column must be built with Date.UTC(...).
+### Time handling
+
+- Every DATETIME holds **Beirut wall-clock time with no offset**. The one exception is
+  `users.reset_expires_at`, a true UTC instant: written from `Date.now()` and compared
+  with `UTC_TIMESTAMP(3)` in SQL, never with `NOW()`.
+- Build booking times only with the existing helpers: `beirutNow()` for "now",
+  `wallClockToDate()` for a value read from a column, and `Date.UTC(...)` from wall-clock
+  digits for input (as `localDateTime` in `routes/requests.schema.ts` does). Never
+  `new Date()` or `new Date(string)` for a booking time — both depend on the machine's
+  time zone.
+- The pool sets `timezone: "Z"` and `dateStrings: true`. Writes encode a Date through its
+  UTC getters, so a Date built with `Date.UTC` from Beirut digits stores exactly those
+  digits. Reads return the raw string (normalised by `formatMysqlDateTime`), so the driver
+  never shifts a value.
+- Columns the database stamps itself (`created_at`, `updated_at`, `responded_at`,
+  `completed_at`, `paid_at`, `visits.actual_start`) use `CURRENT_TIMESTAMP(3)` in
+  MariaDB's `SYSTEM` zone, which must be Beirut. The server checks this at startup and
+  refuses to start otherwise.
+- DST is accepted as-is for the MVP: on the autumn change the 23:00 hour happens twice, and
+  on the spring change the 00:00 hour does not exist. Wall-clock arithmetic stays
+  self-consistent; a job spanning midnight on those nights is an hour off in real time.
 
 MariaDB specifics:
 - `JSON` is an alias for `LONGTEXT` with a `json_valid` CHECK, so JSON columns
