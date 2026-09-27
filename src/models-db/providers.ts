@@ -2,8 +2,7 @@ import type { PoolConnection, RowDataPacket } from "mysql2/promise";
 import { pool } from "./pool";
 import type { Category } from "./categories";
 
-// Public-facing provider fields. Deliberately no email or phone: contact
-// details are not exposed before a customer and provider share a request.
+// Provider fields shown in search results: no contact details.
 export interface ProviderSummary {
   id: string;
   fullName: string;
@@ -13,8 +12,11 @@ export interface ProviderSummary {
   isAccepting: boolean;
 }
 
+// The profile adds the phone number, the one contact detail shared across
+// roles, so the customer's app can place the call. Never the email.
 export interface ProviderProfile extends ProviderSummary {
   bio: string | null;
+  phone: string;
 }
 
 interface ProviderSummaryRow extends RowDataPacket {
@@ -28,6 +30,7 @@ interface ProviderSummaryRow extends RowDataPacket {
 
 interface ProviderProfileRow extends ProviderSummaryRow {
   bio: string | null;
+  phone: string;
 }
 
 interface CategoryRow extends RowDataPacket {
@@ -78,7 +81,7 @@ export async function findProviderProfile(
   providerId: string
 ): Promise<ProviderProfile | null> {
   const [rows] = await pool.query<ProviderProfileRow[]>(
-    `SELECT u.id, u.full_name, u.avatar_url, p.bio, p.area,
+    `SELECT u.id, u.full_name, u.avatar_url, u.phone, p.bio, p.area,
             p.years_experience, p.is_accepting
      FROM providers p
      JOIN users u ON u.id = p.id
@@ -86,7 +89,7 @@ export async function findProviderProfile(
     [providerId]
   );
   const row = rows[0];
-  return row ? { ...mapSummaryRow(row), bio: row.bio } : null;
+  return row ? { ...mapSummaryRow(row), bio: row.bio, phone: row.phone } : null;
 }
 
 export interface ProviderProfileChanges {

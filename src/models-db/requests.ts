@@ -10,10 +10,13 @@ import type { ServiceType } from "../constants/service-type";
 import type { PriceStatus } from "../constants/price-status";
 
 // Beirut wall-clock, no offset. See pool.ts for the schema-wide convention.
+// providerPhone lets the customer's app call the assigned provider. The
+// customer's own phone is never selected here.
 export interface Request {
   id: string;
   customerId: string;
   providerId: string;
+  providerPhone: string;
   categoryId: number;
   intakeSessionId: string | null;
   serviceType: ServiceType | null;
@@ -40,6 +43,7 @@ interface RequestRow extends RowDataPacket {
   id: string;
   customer_id: string;
   provider_id: string;
+  provider_phone: string;
   category_id: number;
   intake_session_id: string | null;
   service_type: string | null;
@@ -58,8 +62,11 @@ interface RequestRow extends RowDataPacket {
   completed_at: string | null;
 }
 
+// provider_phone is looked up by primary key for each row.
 const REQUEST_COLUMNS = `
-  id, customer_id, provider_id, category_id, intake_session_id,
+  id, customer_id, provider_id,
+  (SELECT phone FROM users WHERE users.id = requests.provider_id) AS provider_phone,
+  category_id, intake_session_id,
   service_type, description, address_text, requested_start,
   estimated_duration_minutes, is_urgent, status, price, revised_price, price_status,
   paid_at, created_at, responded_at, completed_at
@@ -70,6 +77,7 @@ function mapRow(row: RequestRow): Request {
     id: row.id,
     customerId: row.customer_id,
     providerId: row.provider_id,
+    providerPhone: row.provider_phone,
     categoryId: row.category_id,
     intakeSessionId: row.intake_session_id,
     serviceType: row.service_type as ServiceType | null,
