@@ -1,5 +1,5 @@
 import type { PoolConnection, RowDataPacket } from "mysql2/promise";
-import { pool } from "./pool";
+import { pool, isDbError } from "./pool";
 import { formatMysqlDateTime } from "./format-datetime";
 import { ConflictError } from "../constants/errors";
 import type { RequestStatus } from "../constants/request-status";
@@ -46,12 +46,6 @@ function mapReviewRow(row: ReviewRow): Review {
 const NOT_COMPLETED_SIGNAL = "Review allowed only on completed requests";
 const ONE_REVIEW_KEY = "uq_reviews_request";
 
-function driverError(err: unknown): { code: unknown; message: string } | null {
-  return err instanceof Error && "code" in err
-    ? { code: err.code, message: err.message }
-    : null;
-}
-
 export interface InsertReviewInput {
   id: string;
   requestId: string;
@@ -72,14 +66,10 @@ export async function insertReview(
       [input.id, input.requestId, input.rating, input.comment]
     );
   } catch (err) {
-    const e = driverError(err);
-    if (
-      e?.code === "ER_SIGNAL_EXCEPTION" &&
-      e.message.includes(NOT_COMPLETED_SIGNAL)
-    ) {
+    if (isDbError(err, "ER_SIGNAL_EXCEPTION", NOT_COMPLETED_SIGNAL)) {
       throw new ConflictError("Reviews can only be left on completed requests");
     }
-    if (e?.code === "ER_DUP_ENTRY" && e.message.includes(ONE_REVIEW_KEY)) {
+    if (isDbError(err, "ER_DUP_ENTRY", ONE_REVIEW_KEY)) {
       throw new ConflictError("This request has already been reviewed");
     }
     throw err;

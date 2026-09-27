@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { pool } from "../models-db/pool";
-import { findRequestById } from "../models-db/requests";
+import { withTransaction } from "../models-db/pool";
 import {
   insertReview,
   findReviewForRequest,
@@ -8,9 +7,9 @@ import {
 } from "../models-db/reviews";
 import { insertJobEvent } from "../models-db/job-events";
 import { JOB_EVENT_TYPE } from "../constants/job-event-type";
-import { NotFoundError, ForbiddenError } from "../constants/errors";
+import { ForbiddenError } from "../constants/errors";
 import { REQUEST_ACTOR_ROLE } from "./request-state-machine";
-import { resolveActorRole } from "./requests";
+import { loadRequestForActor } from "./requests";
 
 export interface CreateReviewInput {
   rating: number;
@@ -25,41 +24,30 @@ export async function createReview(
   actorUserId: string,
   input: CreateReviewInput
 ): Promise<Review> {
-  const request = await findRequestById(requestId);
-  if (!request) {
-    throw new NotFoundError("Request not found");
-  }
-  const actorRole = resolveActorRole(request, actorUserId);
+  const { request, actorRole } = await loadRequestForActor(
+    requestId,
+    actorUserId
+  );
   if (actorRole !== REQUEST_ACTOR_ROLE.CUSTOMER) {
     throw new ForbiddenError("Only the customer can review this request");
   }
 
   const reviewId = randomUUID();
-  const conn = await pool.getConnection();
-  try {
-    await conn.beginTransaction();
-    try {
-      await insertReview(conn, {
-        id: reviewId,
-        requestId: request.id,
-        rating: input.rating,
-        comment: input.comment,
-      });
-      await insertJobEvent(conn, {
-        id: randomUUID(),
-        requestId: request.id,
-        actorUserId,
-        eventType: JOB_EVENT_TYPE.REVIEW_CREATED,
-        payload: { reviewId },
-      });
-      await conn.commit();
-    } catch (err) {
-      await conn.rollback();
-      throw err;
-    }
-  } finally {
-    conn.release();
-  }
+  await withTransaction(async (conn) => {
+    await insertReview(conn, {
+      id: reviewId,
+      requestId: request.id,
+      rating: input.rating,
+      comment: input.comment,
+    });
+    await insertJobEvent(conn, {
+      id: randomUUID(),
+      requestId: request.id,
+      actorUserId,
+      eventType: JOB_EVENT_TYPE.REVIEW_CREATED,
+      payload: { reviewId },
+    });
+  });
 
   const created = await findReviewForRequest(request.id);
   if (!created) {

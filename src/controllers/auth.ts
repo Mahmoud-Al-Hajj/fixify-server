@@ -27,10 +27,9 @@ export async function forgotPasswordHandler(
   res: Response
 ): Promise<void> {
   const { email } = req.body as ForgotPasswordBody;
-  const resetToken = await authService.requestPasswordReset(email);
+  await authService.requestPasswordReset(email);
   res.status(200).json({
     message: "If that email is registered, a reset token has been issued.",
-    resetToken,
   });
 }
 

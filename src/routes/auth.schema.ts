@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const phoneRegex = /^[0-9+\-\s()]{6,30}$/;
+export const phoneRegex = /^[0-9+\-\s()]{6,30}$/;
 
 export const registerSchema = z.object({
   fullName: z.string().trim().min(1).max(120),

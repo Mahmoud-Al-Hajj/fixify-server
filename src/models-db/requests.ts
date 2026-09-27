@@ -7,7 +7,6 @@ import { pool } from "./pool";
 import { formatMysqlDateTime } from "./format-datetime";
 import type { RequestStatus } from "../constants/request-status";
 import type { ServiceType } from "../constants/service-type";
-import type { AiStatus } from "../constants/ai-status";
 import type { PriceStatus } from "../constants/price-status";
 
 // Beirut wall-clock, no offset. See pool.ts for the schema-wide convention.
@@ -16,6 +15,7 @@ export interface Request {
   customerId: string;
   providerId: string;
   categoryId: number;
+  intakeSessionId: string | null;
   serviceType: ServiceType | null;
   description: string;
   addressText: string;
@@ -23,8 +23,6 @@ export interface Request {
   estimatedDurationMinutes: number | null;
   isUrgent: boolean;
   status: RequestStatus;
-  aiStatus: AiStatus;
-  aiAnalysis: unknown;
   // DECIMAL comes back as a string from mysql2 (decimalNumbers is not set
   // in pool.ts) — deliberately not converted to number, since money must
   // never become a float. Format for display at the edge.
@@ -41,6 +39,7 @@ interface RequestRow extends RowDataPacket {
   customer_id: string;
   provider_id: string;
   category_id: number;
+  intake_session_id: string | null;
   service_type: string | null;
   description: string;
   address_text: string;
@@ -48,8 +47,6 @@ interface RequestRow extends RowDataPacket {
   estimated_duration_minutes: number | null;
   is_urgent: number;
   status: string;
-  ai_status: string;
-  ai_analysis: unknown;
   price: string | null;
   price_status: string;
   paid_at: string | null;
@@ -59,11 +56,10 @@ interface RequestRow extends RowDataPacket {
 }
 
 const REQUEST_COLUMNS = `
-  id, customer_id, provider_id, category_id, service_type,
-  description, address_text, requested_start,
-  estimated_duration_minutes, is_urgent, status, ai_status,
-  ai_analysis, price, price_status, paid_at, created_at,
-  responded_at, completed_at
+  id, customer_id, provider_id, category_id, intake_session_id,
+  service_type, description, address_text, requested_start,
+  estimated_duration_minutes, is_urgent, status, price, price_status,
+  paid_at, created_at, responded_at, completed_at
 `;
 
 function mapRow(row: RequestRow): Request {
@@ -72,6 +68,7 @@ function mapRow(row: RequestRow): Request {
     customerId: row.customer_id,
     providerId: row.provider_id,
     categoryId: row.category_id,
+    intakeSessionId: row.intake_session_id,
     serviceType: row.service_type as ServiceType | null,
     description: row.description,
     addressText: row.address_text,
@@ -79,8 +76,6 @@ function mapRow(row: RequestRow): Request {
     estimatedDurationMinutes: row.estimated_duration_minutes,
     isUrgent: Boolean(row.is_urgent),
     status: row.status as RequestStatus,
-    aiStatus: row.ai_status as AiStatus,
-    aiAnalysis: row.ai_analysis,
     price: row.price,
     priceStatus: row.price_status as PriceStatus,
     paidAt: formatMysqlDateTime(row.paid_at),

@@ -10,7 +10,8 @@
     "start": "node dist/server.js",
     "test": "tsx --test \"src/**/*.test.ts\"",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "lint": "tsc --noEmit && prettier --check ."
   },
   "keywords": [],
   "author": "",

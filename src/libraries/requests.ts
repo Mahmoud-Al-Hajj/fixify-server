@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { PoolConnection } from "mysql2/promise";
-import { pool } from "../models-db/pool";
+import { withTransaction } from "../models-db/pool";
 import {
   insertRequest,
   findRequestById,
@@ -23,6 +23,7 @@ import {
   type Visit,
 } from "../models-db/visits";
 import { insertJobEvent } from "../models-db/job-events";
+import { beirutNow } from "../models-db/format-datetime";
 import { findReviewForRequest } from "../models-db/reviews";
 import { VISIT_STATUS, type VisitStatus } from "../constants/visit-status";
 import { JOB_EVENT_TYPE, type JobEventType } from "../constants/job-event-type";
@@ -35,7 +36,6 @@ import {
   ForbiddenError,
   ValidationError,
   ConflictError,
-  InvalidTransitionError,
 } from "../constants/errors";
 import {
   REQUEST_ACTOR_ROLE,
@@ -54,6 +54,9 @@ export async function createRequest(
 ): Promise<Request> {
   if (input.customerId === input.providerId) {
     throw new ValidationError("You cannot request service from yourself");
+  }
+  if (input.requestedStart !== null && input.requestedStart <= beirutNow()) {
+    throw new ValidationError("requestedStart must be in the future");
   }
 
   const provider = await findProviderAcceptance(input.providerId);
@@ -80,26 +83,16 @@ export async function createRequest(
 
   const id = randomUUID();
 
-  const conn = await pool.getConnection();
-  try {
-    await conn.beginTransaction();
-    try {
-      await insertRequest(conn, { id, ...input });
-      await insertJobEvent(conn, {
-        id: randomUUID(),
-        requestId: id,
-        actorUserId: input.customerId,
-        eventType: JOB_EVENT_TYPE.REQUEST_CREATED,
-        payload: null,
-      });
-      await conn.commit();
-    } catch (err) {
-      await conn.rollback();
-      throw err;
-    }
-  } finally {
-    conn.release();
-  }
+  await withTransaction(async (conn) => {
+    await insertRequest(conn, { id, ...input });
+    await insertJobEvent(conn, {
+      id: randomUUID(),
+      requestId: id,
+      actorUserId: input.customerId,
+      eventType: JOB_EVENT_TYPE.REQUEST_CREATED,
+      payload: null,
+    });
+  });
 
   const created = await findRequestById(id);
   if (!created) {
@@ -108,7 +101,7 @@ export async function createRequest(
   return created;
 }
 
-export function resolveActorRole(
+function resolveActorRole(
   request: Request,
   actorUserId: string
 ): RequestActorRole {
@@ -121,15 +114,27 @@ export function resolveActorRole(
   throw new ForbiddenError("You are not a party to this request");
 }
 
-export async function getRequestForActor(
+// The one entry point for acting on an existing request: 404 if it doesn't
+// exist, 403 if the caller is neither its customer nor its provider. Every
+// request action goes through here, so a change to who may touch a request is
+// made in one place. The resolved role is returned so callers check it rather
+// than re-deriving or assuming it.
+export async function loadRequestForActor(
   requestId: string,
   actorUserId: string
-): Promise<{ request: Request; visits: Visit[]; hasReview: boolean }> {
+): Promise<{ request: Request; actorRole: RequestActorRole }> {
   const request = await findRequestById(requestId);
   if (!request) {
     throw new NotFoundError("Request not found");
   }
-  resolveActorRole(request, actorUserId);
+  return { request, actorRole: resolveActorRole(request, actorUserId) };
+}
+
+export async function getRequestForActor(
+  requestId: string,
+  actorUserId: string
+): Promise<{ request: Request; visits: Visit[]; hasReview: boolean }> {
+  const { request } = await loadRequestForActor(requestId, actorUserId);
   const visits = await findVisitsForRequest(request.id);
   const review = await findReviewForRequest(request.id);
   return { request, visits, hasReview: review !== null };
@@ -156,7 +161,11 @@ async function attachNextVisits(
   }));
 }
 
-const CHANGED_CONCURRENTLY_MESSAGE =
+// Always raised as a ConflictError (409 CONFLICT): the action was valid when
+// checked but another write got there first, so reloading and retrying may
+// succeed. InvalidTransitionError stays reserved for moves that are never
+// allowed, whatever the timing.
+export const CHANGED_CONCURRENTLY_MESSAGE =
   "Request was changed by another action; reload it and try again";
 
 interface TransitionSideEffects {
@@ -182,48 +191,37 @@ interface TransitionInput {
 }
 
 async function transitionRequest(input: TransitionInput): Promise<Request> {
-  const request = await findRequestById(input.requestId);
-  if (!request) {
-    throw new NotFoundError("Request not found");
-  }
-  const actorRole = resolveActorRole(request, input.actorUserId);
+  const { request, actorRole } = await loadRequestForActor(
+    input.requestId,
+    input.actorUserId
+  );
   assertRequestTransition(request.status, input.targetStatus, actorRole);
   const sideEffects: TransitionSideEffects = input.prepare
     ? await input.prepare(request)
     : { eventPayload: null };
 
-  const conn = await pool.getConnection();
-  try {
-    await conn.beginTransaction();
-    try {
-      const updated = await updateRequestStatus(conn, {
-        id: request.id,
-        fromStatus: request.status,
-        toStatus: input.targetStatus,
-        markResponded: input.markResponded,
-        markCompleted: input.markCompleted,
-      });
-      if (!updated) {
-        throw new InvalidTransitionError(CHANGED_CONCURRENTLY_MESSAGE);
-      }
-      if (sideEffects.applyVisitChanges) {
-        await sideEffects.applyVisitChanges(conn);
-      }
-      await insertJobEvent(conn, {
-        id: randomUUID(),
-        requestId: request.id,
-        actorUserId: input.actorUserId,
-        eventType: input.eventType,
-        payload: sideEffects.eventPayload,
-      });
-      await conn.commit();
-    } catch (err) {
-      await conn.rollback();
-      throw err;
+  await withTransaction(async (conn) => {
+    const updated = await updateRequestStatus(conn, {
+      id: request.id,
+      fromStatus: request.status,
+      toStatus: input.targetStatus,
+      markResponded: input.markResponded,
+      markCompleted: input.markCompleted,
+    });
+    if (!updated) {
+      throw new ConflictError(CHANGED_CONCURRENTLY_MESSAGE);
     }
-  } finally {
-    conn.release();
-  }
+    if (sideEffects.applyVisitChanges) {
+      await sideEffects.applyVisitChanges(conn);
+    }
+    await insertJobEvent(conn, {
+      id: randomUUID(),
+      requestId: request.id,
+      actorUserId: input.actorUserId,
+      eventType: input.eventType,
+      payload: sideEffects.eventPayload,
+    });
+  });
 
   const transitioned = await findRequestById(request.id);
   if (!transitioned) {
@@ -280,7 +278,7 @@ async function applyVisitTransition(
     markActualStart,
   });
   if (!updated) {
-    throw new InvalidTransitionError(CHANGED_CONCURRENTLY_MESSAGE);
+    throw new ConflictError(CHANGED_CONCURRENTLY_MESSAGE);
   }
 }
 
@@ -368,11 +366,10 @@ export async function markRequestPaid(
   requestId: string,
   actorUserId: string
 ): Promise<Request> {
-  const request = await findRequestById(requestId);
-  if (!request) {
-    throw new NotFoundError("Request not found");
-  }
-  const actorRole = resolveActorRole(request, actorUserId);
+  const { request, actorRole } = await loadRequestForActor(
+    requestId,
+    actorUserId
+  );
   if (actorRole !== REQUEST_ACTOR_ROLE.PROVIDER) {
     throw new ForbiddenError("Only the provider can mark a request as paid");
   }
@@ -389,33 +386,23 @@ export async function markRequestPaid(
     throw new Error("A completed request has no price");
   }
 
-  const conn = await pool.getConnection();
-  try {
-    await conn.beginTransaction();
-    try {
-      const updated = await markRequestPaidModel(
-        conn,
-        request.id,
-        REQUEST_STATUS.COMPLETED
-      );
-      if (!updated) {
-        throw new ConflictError(CHANGED_CONCURRENTLY_MESSAGE);
-      }
-      await insertJobEvent(conn, {
-        id: randomUUID(),
-        requestId: request.id,
-        actorUserId,
-        eventType: JOB_EVENT_TYPE.REQUEST_PAID,
-        payload: { price },
-      });
-      await conn.commit();
-    } catch (err) {
-      await conn.rollback();
-      throw err;
+  await withTransaction(async (conn) => {
+    const updated = await markRequestPaidModel(
+      conn,
+      request.id,
+      REQUEST_STATUS.COMPLETED
+    );
+    if (!updated) {
+      throw new ConflictError(CHANGED_CONCURRENTLY_MESSAGE);
     }
-  } finally {
-    conn.release();
-  }
+    await insertJobEvent(conn, {
+      id: randomUUID(),
+      requestId: request.id,
+      actorUserId,
+      eventType: JOB_EVENT_TYPE.REQUEST_PAID,
+      payload: { price },
+    });
+  });
 
   const paid = await findRequestById(request.id);
   if (!paid) {

@@ -1,28 +1,26 @@
 import { randomUUID } from "node:crypto";
 import type { PoolConnection } from "mysql2/promise";
-import { pool } from "../models-db/pool";
+import { withTransaction } from "../models-db/pool";
 import {
   findRequestById,
   updateQuoteState,
   type Request,
 } from "../models-db/requests";
-import { insertVisit } from "../models-db/visits";
+import { insertVisit, hasOverlappingVisit } from "../models-db/visits";
+import { lockProviderForUpdate } from "../models-db/providers";
 import { insertJobEvent } from "../models-db/job-events";
-import { wallClockToDate } from "../models-db/format-datetime";
+import { wallClockToDate, beirutNow } from "../models-db/format-datetime";
 import { JOB_EVENT_TYPE } from "../constants/job-event-type";
 import { PRICE_STATUS, type PriceStatus } from "../constants/price-status";
 import { REQUEST_STATUS } from "../constants/request-status";
-import {
-  NotFoundError,
-  ConflictError,
-  InvalidTransitionError,
-} from "../constants/errors";
+import { ConflictError, InvalidTransitionError } from "../constants/errors";
 import {
   assertRequestTransition,
-  REQUEST_ACTOR_ROLE,
+  type RequestActorRole,
 } from "./request-state-machine";
 import { assertQuoteTransition } from "./quote-state-machine";
-import { resolveActorRole } from "./requests";
+import { OPEN_VISIT_STATUSES } from "./visit-state-machine";
+import { loadRequestForActor, CHANGED_CONCURRENTLY_MESSAGE } from "./requests";
 
 // Quote actions are exposed only for pending requests for now. The in-progress
 // edges in QUOTE_TRANSITIONS belong to revised quotes, which arrive with photo
@@ -33,12 +31,11 @@ async function loadForQuoteAction(
   requestId: string,
   actorUserId: string,
   targetPriceStatus: PriceStatus
-): Promise<Request> {
-  const request = await findRequestById(requestId);
-  if (!request) {
-    throw new NotFoundError("Request not found");
-  }
-  const actorRole = resolveActorRole(request, actorUserId);
+): Promise<{ request: Request; actorRole: RequestActorRole }> {
+  const { request, actorRole } = await loadRequestForActor(
+    requestId,
+    actorUserId
+  );
   assertQuoteTransition(
     request.priceStatus,
     targetPriceStatus,
@@ -50,25 +47,7 @@ async function loadForQuoteAction(
       `Cannot move quote from '${request.priceStatus}' to '${targetPriceStatus}' while the request is '${request.status}'`
     );
   }
-  return request;
-}
-
-async function inTransaction(
-  work: (conn: PoolConnection) => Promise<void>
-): Promise<void> {
-  const conn = await pool.getConnection();
-  try {
-    await conn.beginTransaction();
-    try {
-      await work(conn);
-      await conn.commit();
-    } catch (err) {
-      await conn.rollback();
-      throw err;
-    }
-  } finally {
-    conn.release();
-  }
+  return { request, actorRole };
 }
 
 async function applyQuoteState(
@@ -89,9 +68,7 @@ async function applyQuoteState(
     ...change,
   });
   if (!updated) {
-    throw new InvalidTransitionError(
-      "Request was changed by another action; reload it and try again"
-    );
+    throw new ConflictError(CHANGED_CONCURRENTLY_MESSAGE);
   }
 }
 
@@ -108,13 +85,13 @@ export async function proposeQuote(
   actorUserId: string,
   price: string
 ): Promise<Request> {
-  const request = await loadForQuoteAction(
+  const { request } = await loadForQuoteAction(
     requestId,
     actorUserId,
     PRICE_STATUS.PROPOSED
   );
 
-  await inTransaction(async (conn) => {
+  await withTransaction(async (conn) => {
     await applyQuoteState(conn, request, {
       toStatus: request.status,
       toPriceStatus: PRICE_STATUS.PROPOSED,
@@ -137,13 +114,13 @@ export async function declineQuote(
   requestId: string,
   actorUserId: string
 ): Promise<Request> {
-  const request = await loadForQuoteAction(
+  const { request } = await loadForQuoteAction(
     requestId,
     actorUserId,
     PRICE_STATUS.DECLINED
   );
 
-  await inTransaction(async (conn) => {
+  await withTransaction(async (conn) => {
     await applyQuoteState(conn, request, {
       toStatus: request.status,
       toPriceStatus: PRICE_STATUS.DECLINED,
@@ -166,17 +143,14 @@ export async function acceptQuote(
   requestId: string,
   actorUserId: string
 ): Promise<Request> {
-  const request = await loadForQuoteAction(
+  const { request, actorRole } = await loadForQuoteAction(
     requestId,
     actorUserId,
     PRICE_STATUS.ACCEPTED
   );
-  // The quote table has already confirmed the actor is the customer.
-  assertRequestTransition(
-    request.status,
-    REQUEST_STATUS.SCHEDULED,
-    REQUEST_ACTOR_ROLE.CUSTOMER
-  );
+  // Checked against the caller's actual role, not an assumed one: the request
+  // state machine stays authoritative even if the quote rules change.
+  assertRequestTransition(request.status, REQUEST_STATUS.SCHEDULED, actorRole);
 
   if (
     request.requestedStart === null ||
@@ -192,11 +166,32 @@ export async function acceptQuote(
   }
 
   const scheduledStart = wallClockToDate(request.requestedStart);
+  if (scheduledStart <= beirutNow()) {
+    throw new ConflictError(
+      "The requested start time has passed; cancel this request and book a new time"
+    );
+  }
   const scheduledEnd = new Date(
     scheduledStart.getTime() + request.estimatedDurationMinutes * 60_000
   );
 
-  await inTransaction(async (conn) => {
+  await withTransaction(async (conn) => {
+    // The lock comes first: the overlap read below then sees every visit a
+    // competing booking for this provider committed before we got the lock.
+    await lockProviderForUpdate(conn, request.providerId);
+    if (
+      await hasOverlappingVisit(
+        conn,
+        request.providerId,
+        scheduledStart,
+        scheduledEnd,
+        OPEN_VISIT_STATUSES
+      )
+    ) {
+      throw new ConflictError(
+        "That time overlaps another booking with this provider. Please choose another time."
+      );
+    }
     await applyQuoteState(conn, request, {
       toStatus: REQUEST_STATUS.SCHEDULED,
       toPriceStatus: PRICE_STATUS.ACCEPTED,

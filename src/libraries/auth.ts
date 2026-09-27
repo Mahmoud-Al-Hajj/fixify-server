@@ -1,5 +1,5 @@
 import { randomUUID, randomBytes, createHash } from "node:crypto";
-import { pool } from "../models-db/pool";
+import { withTransaction, isDbError } from "../models-db/pool";
 import {
   insertUser,
   findUserCredentialsByEmail,
@@ -26,15 +26,6 @@ const RESET_TOKEN_TTL_MS = 30 * 60 * 1000;
 // Comparable-timing stand-in for a real hash when the email isn't found, so
 // login doesn't leak account existence via response timing.
 const DUMMY_HASH_PROMISE = hashPassword(randomUUID());
-
-function isDuplicateEntryError(err: unknown): boolean {
-  return (
-    typeof err === "object" &&
-    err !== null &&
-    "code" in err &&
-    (err as { code?: unknown }).code === "ER_DUP_ENTRY"
-  );
-}
 
 export interface RegisterInput {
   fullName: string;
@@ -66,10 +57,8 @@ export async function register(
     }
   }
 
-  const conn = await pool.getConnection();
   try {
-    await conn.beginTransaction();
-    try {
+    await withTransaction(async (conn) => {
       await insertUser(conn, {
         id,
         fullName: input.fullName,
@@ -86,17 +75,12 @@ export async function register(
         });
         await insertProviderCategories(conn, id, categoryIds);
       }
-
-      await conn.commit();
-    } catch (err) {
-      await conn.rollback();
-      if (isDuplicateEntryError(err)) {
-        throw new ConflictError("Email is already registered");
-      }
-      throw err;
+    });
+  } catch (err) {
+    if (isDbError(err, "ER_DUP_ENTRY", "uq_users_email")) {
+      throw new ConflictError("Email is already registered");
     }
-  } finally {
-    conn.release();
+    throw err;
   }
 
   const user: PublicUser = {
@@ -132,20 +116,14 @@ export async function login(
   return { user, token: signAccessToken(user.id) };
 }
 
-// No email provider exists in this project yet. Returning the raw token here
-// (rather than emailing it) keeps the reset flow testable without new
-// infrastructure; the response shape is identical whether or not the email
-// matched, so this doesn't leak account existence. Swap for real delivery
-// (and drop the token from the response) once a mail provider is chosen.
-export async function requestPasswordReset(
-  email: string
-): Promise<string | null> {
+// Stores a new reset token hash for the email, if it is registered. The raw
+// token is never returned or logged: it must only reach the account owner,
+// and no delivery channel (email) exists yet.
+export async function requestPasswordReset(email: string): Promise<void> {
   const rawToken = randomBytes(32).toString("hex");
   const tokenHash = createHash("sha256").update(rawToken).digest("hex");
   const expiresAt = new Date(Date.now() + RESET_TOKEN_TTL_MS);
-
-  const found = await setPasswordResetToken(email, tokenHash, expiresAt);
-  return found ? rawToken : null;
+  await setPasswordResetToken(email, tokenHash, expiresAt);
 }
 
 export async function resetPassword(

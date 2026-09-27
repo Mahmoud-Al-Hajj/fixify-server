@@ -1,4 +1,4 @@
-import type { RowDataPacket, ResultSetHeader } from "mysql2/promise";
+import type { RowDataPacket } from "mysql2/promise";
 import type { PoolConnection } from "mysql2/promise";
 import { pool } from "./pool";
 import { formatMysqlDateTime } from "./format-datetime";
@@ -104,17 +104,63 @@ export async function findPublicUserById(
   };
 }
 
+interface PasswordHashRow extends RowDataPacket {
+  password_hash: string;
+}
+
+// Returns the bare hash for verification only. Deliberately not part of any
+// user object, so it can't be carried into a response by accident.
+export async function findPasswordHashById(id: string): Promise<string | null> {
+  const [rows] = await pool.query<PasswordHashRow[]>(
+    `SELECT password_hash FROM users WHERE id = ?`,
+    [id]
+  );
+  return rows[0]?.password_hash ?? null;
+}
+
+export interface UserProfileChanges {
+  fullName?: string;
+  phone?: string;
+}
+
+// Only the fixed fragments below ever become SQL; every value is a parameter.
+const PROFILE_CHANGE_FRAGMENTS: ReadonlyArray<
+  [keyof UserProfileChanges, string]
+> = [
+  ["fullName", "full_name = ?"],
+  ["phone", "phone = ?"],
+];
+
+export async function updateUserProfile(
+  id: string,
+  changes: UserProfileChanges
+): Promise<void> {
+  const fragments: string[] = [];
+  const values: string[] = [];
+  for (const [field, fragment] of PROFILE_CHANGE_FRAGMENTS) {
+    const value = changes[field];
+    if (value !== undefined) {
+      fragments.push(fragment);
+      values.push(value);
+    }
+  }
+  if (fragments.length === 0) return;
+  await pool.query(`UPDATE users SET ${fragments.join(", ")} WHERE id = ?`, [
+    ...values,
+    id,
+  ]);
+}
+
 export async function setPasswordResetToken(
   email: string,
   tokenHash: string,
   expiresAt: Date
-): Promise<boolean> {
-  const [result] = await pool.query<ResultSetHeader>(
+): Promise<void> {
+  await pool.query(
     `UPDATE users SET reset_token_hash = ?, reset_expires_at = ?
      WHERE email = ?`,
     [tokenHash, expiresAt, email]
   );
-  return result.affectedRows > 0;
 }
 
 export async function findUserByResetTokenHash(

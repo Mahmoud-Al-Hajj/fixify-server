@@ -312,6 +312,7 @@ Two roles, one `users` table. A provider is a `users` row with a matching `provi
 4. **Stale proposal artifact:** the use-case diagram in the proposal lists "submit verification docs" for providers. Verification is **out of scope**. Treat that diagram line as stale.
 5. **Deployment** — not yet decided. Likely Expo EAS build + a small VPS or Railway/Render for the API + managed MySQL. Affects env vars, CORS, and storage for uploaded photos.
 6. **Request list pagination** — `GET /requests` returns every request for the chosen role, unpaginated and unfiltered; revisit (with server-side status filtering) if a provider's request volume grows enough to matter.
+7. **Known limitation: JWTs survive a password change.** `POST /users/me/password` does not invalidate tokens already issued — JWTs are stateless and nothing tracks them. Revoking them needs a token-version column (or a blacklist) checked on every authenticated request; judged not worth building for MVP. The stored password-reset token is cleared on change.
 
 ---
 

@@ -33,6 +33,24 @@ export function errorHandler(
     return;
   }
 
+  // express.json() rejects a malformed or oversized body with a 4xx status.
+  if (
+    err instanceof Error &&
+    "status" in err &&
+    typeof err.status === "number" &&
+    err.status >= 400 &&
+    err.status < 500
+  ) {
+    const tooLarge = err.status === 413;
+    res.status(err.status).json({
+      error: {
+        code: tooLarge ? "PAYLOAD_TOO_LARGE" : "VALIDATION_FAILED",
+        message: tooLarge ? "Request body too large" : "Malformed request body",
+      },
+    });
+    return;
+  }
+
   // Unexpected — always log server-side, never leak details to the client
   logger.error("unhandled error", {
     requestId: req.id,

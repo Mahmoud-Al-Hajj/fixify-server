@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { requireAtLeastOneField } from "./partial-update.schema";
 
 // Strict, like listRequestsQuerySchema: an unsupported filter must fail loudly
 // rather than be dropped.
@@ -19,16 +20,14 @@ export type ListProvidersQuery = z.infer<typeof listProvidersQuerySchema>;
 
 // Strict so a misspelled field (e.g. "isAcepting") is a 400, not a silent 200
 // that changed nothing. Omitted fields stay as they are; null clears one.
-export const updateOwnProviderSchema = z
-  .strictObject({
+export const updateOwnProviderSchema = requireAtLeastOneField(
+  z.strictObject({
     isAccepting: z.boolean().optional(),
     bio: z.string().trim().min(1).max(1000).nullable().optional(),
     yearsExperience: z.number().int().min(0).max(70).nullable().optional(),
     area: z.string().trim().min(1).max(80).nullable().optional(),
   })
-  .refine((body) => Object.keys(body).length > 0, {
-    message: "Provide at least one field to update",
-  });
+);
 export type UpdateOwnProviderBody = z.infer<typeof updateOwnProviderSchema>;
 
 export const replaceOwnCategoriesSchema = z.object({

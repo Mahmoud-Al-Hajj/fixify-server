@@ -1,4 +1,4 @@
-import mysql from "mysql2/promise";
+import mysql, { type PoolConnection } from "mysql2/promise";
 import { env } from "../config/env";
 
 // Every DATETIME column in this schema is Beirut wall-clock time stored
@@ -32,4 +32,36 @@ export async function assertDbReachable(): Promise<void> {
   } finally {
     conn.release();
   }
+}
+
+// Runs work on one connection inside a transaction: commits if it resolves,
+// rolls back and rethrows if it throws.
+export async function withTransaction<T>(
+  work: (conn: PoolConnection) => Promise<T>
+): Promise<T> {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    try {
+      const result = await work(conn);
+      await conn.commit();
+      return result;
+    } catch (err) {
+      await conn.rollback();
+      throw err;
+    }
+  } finally {
+    conn.release();
+  }
+}
+
+// A driver error with this code whose message names the given key,
+// constraint or trigger message.
+export function isDbError(err: unknown, code: string, text: string): boolean {
+  return (
+    err instanceof Error &&
+    "code" in err &&
+    err.code === code &&
+    err.message.includes(text)
+  );
 }

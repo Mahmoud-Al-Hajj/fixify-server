@@ -1,9 +1,10 @@
-import { pool } from "../models-db/pool";
+import { withTransaction } from "../models-db/pool";
 import {
   listProvidersByCategory as listProvidersByCategoryModel,
   findProviderProfile,
   listCategoriesForProvider,
   updateProviderProfile,
+  lockProviderForUpdate,
   replaceProviderCategories,
   type ProviderSummary,
   type ProviderProfile,
@@ -107,19 +108,10 @@ export async function replaceOwnCategories(
     throw new ValidationError(`Unknown category id(s): ${unknown.join(", ")}`);
   }
 
-  const conn = await pool.getConnection();
-  try {
-    await conn.beginTransaction();
-    try {
-      await replaceProviderCategories(conn, userId, uniqueIds);
-      await conn.commit();
-    } catch (err) {
-      await conn.rollback();
-      throw err;
-    }
-  } finally {
-    conn.release();
-  }
+  await withTransaction(async (conn) => {
+    await lockProviderForUpdate(conn, userId);
+    await replaceProviderCategories(conn, userId, uniqueIds);
+  });
 
   return listCategoriesForProvider(userId);
 }

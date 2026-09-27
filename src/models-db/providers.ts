@@ -133,6 +133,19 @@ export async function updateProviderProfile(
   );
 }
 
+// Takes an exclusive lock on the provider row for the rest of the transaction.
+// Concurrent category replaces for the same provider then queue on this one
+// parent row instead of taking child-row locks on provider_categories in
+// different orders, which is what lets overlapping replaces deadlock.
+export async function lockProviderForUpdate(
+  conn: PoolConnection,
+  providerId: string
+): Promise<void> {
+  await conn.query(`SELECT id FROM providers WHERE id = ? FOR UPDATE`, [
+    providerId,
+  ]);
+}
+
 // Replaces the provider's category set in one transaction. Rows for categories
 // that stay are left in place (keeping their base_rate); only removed ones are
 // deleted and only new ones inserted. The upsert makes a concurrent replace

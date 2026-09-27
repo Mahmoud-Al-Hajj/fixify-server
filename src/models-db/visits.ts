@@ -3,7 +3,7 @@ import type {
   ResultSetHeader,
   RowDataPacket,
 } from "mysql2/promise";
-import { pool } from "./pool";
+import { pool, isDbError } from "./pool";
 import { formatMysqlDateTime } from "./format-datetime";
 import { ConflictError } from "../constants/errors";
 import { VISIT_STATUS, type VisitStatus } from "../constants/visit-status";
@@ -108,6 +108,26 @@ export async function cancelOpenVisitsForRequest(
   );
 }
 
+// Whether an open visit of this provider overlaps [start, end). Run it inside
+// the booking transaction after lockProviderForUpdate, so no competing booking
+// can commit in between. Served by idx_visits_provider_time.
+export async function hasOverlappingVisit(
+  conn: PoolConnection,
+  providerId: string,
+  start: Date,
+  end: Date,
+  openStatuses: readonly VisitStatus[]
+): Promise<boolean> {
+  const [rows] = await conn.query<RowDataPacket[]>(
+    `SELECT 1 FROM visits
+     WHERE provider_id = ? AND status IN (?)
+       AND scheduled_start < ? AND scheduled_end > ?
+     LIMIT 1`,
+    [providerId, openStatuses, end, start]
+  );
+  return rows.length > 0;
+}
+
 export interface InsertVisitInput {
   id: string;
   requestId: string;
@@ -119,15 +139,6 @@ export interface InsertVisitInput {
 }
 
 const ACTIVE_SLOT_KEY = "uq_visits_provider_active_slot";
-
-function isActiveSlotConflict(err: unknown): boolean {
-  return (
-    err instanceof Error &&
-    "code" in err &&
-    err.code === "ER_DUP_ENTRY" &&
-    err.message.includes(ACTIVE_SLOT_KEY)
-  );
-}
 
 // The unique key on (provider_id, active_slot) is the double-booking
 // guarantee. There is deliberately no check-then-insert: it would race.
@@ -148,7 +159,7 @@ export async function insertVisit(
       ]
     );
   } catch (err) {
-    if (isActiveSlotConflict(err)) {
+    if (isDbError(err, "ER_DUP_ENTRY", ACTIVE_SLOT_KEY)) {
       throw new ConflictError(
         "That time slot has already been booked with this provider. Please choose another time."
       );

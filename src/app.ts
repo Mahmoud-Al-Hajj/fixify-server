@@ -9,6 +9,7 @@ import { categoriesRouter } from "./routes/categories";
 import { authRouter } from "./routes/auth";
 import { requestsRouter } from "./routes/requests";
 import { providersRouter } from "./routes/providers";
+import { usersRouter } from "./routes/users";
 
 export const app = express();
 
@@ -36,6 +37,7 @@ app.use("/categories", categoriesRouter);
 app.use("/auth", authRouter);
 app.use("/requests", requestsRouter);
 app.use("/providers", providersRouter);
+app.use("/users", usersRouter);
 
 // Unmatched route → 404 in the standard error shape
 app.use(notFoundHandler);
