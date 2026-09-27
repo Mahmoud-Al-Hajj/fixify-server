@@ -539,10 +539,10 @@ Rules, all load-bearing:
   customer message with text. The client never sends service type, duration or
   description. The server derives them at booking time:
 
-  | Situation                                                        | `service_type`, duration | Visit length  | Parts                   |
-  | ---------------------------------------------------------------- | ------------------------ | ------------- | ----------------------- |
-  | diagnosis `done` and `categoryId` = the diagnosis category       | from the diagnosis       | the duration  | seeded, `source = 'ai'` |
-  | trade changed, `none` / `pending` / `failed`, or category `null` | `NULL`                   | 60 minutes    | none                    |
+  | Situation                                                        | `service_type`, duration | Visit length (at quote acceptance) | Parts                   |
+  | ---------------------------------------------------------------- | ------------------------ | ---------------------------------- | ----------------------- |
+  | diagnosis `done` and `categoryId` = the diagnosis category       | from the diagnosis       | the duration                       | seeded, `source = 'ai'` |
+  | trade changed, `none` / `pending` / `failed`, or category `null` | `NULL`                   | 60 minutes (`COALESCE`)            | none                    |
 
   `description` is the customer's messages in order, joined by blank lines, cut to 2,000
   characters. A diagnosis that finishes after booking is stored on the session only: it
