@@ -75,13 +75,13 @@ export const CASES: DiagnosisCase[] = [
         photos: ["split-ac.jpg"],
       },
     ],
-    expect: { category: ["AC & Refrigeration"] },
+    expect: { category: ["AC & Refrigeration"], safetyNote: false },
   },
   {
     id: "washer-arabic",
     note: "Arabic input, English output",
     turns: [{ sender: "customer", text: "الغسالة ما عم تصفّي المي" }],
-    expect: { category: ["Appliance Repair"] },
+    expect: { category: ["Appliance Repair"], safetyNote: false },
   },
   {
     id: "generator-french",
@@ -111,7 +111,7 @@ export const CASES: DiagnosisCase[] = [
     id: "lockout",
     note: "lockout is urgent",
     turns: [{ sender: "customer", text: "locked out, key broke in the door" }],
-    expect: { category: ["Locksmith"], isUrgent: true },
+    expect: { category: ["Locksmith"], isUrgent: true, safetyNote: false },
   },
   {
     id: "ceiling-stain",
@@ -141,7 +141,7 @@ export const CASES: DiagnosisCase[] = [
     id: "no-trade",
     note: "no trade fits: category null",
     turns: [{ sender: "customer", text: "my car makes a noise when I brake" }],
-    expect: { category: [null] },
+    expect: { category: [null], safetyNote: false },
   },
   {
     id: "contradiction",
@@ -159,7 +159,7 @@ export const CASES: DiagnosisCase[] = [
     id: "vague",
     note: "too vague: confidence low",
     turns: [{ sender: "customer", text: "something is broken please help" }],
-    expect: { confidence: ["low"] },
+    expect: { confidence: ["low"], safetyNote: false },
   },
   {
     id: "photo-only-first",
@@ -210,6 +210,7 @@ export const CASES: DiagnosisCase[] = [
     expect: {
       category: ["AC & Refrigeration"],
       serviceType: ["installation"],
+      safetyNote: false,
     },
   },
 ];
