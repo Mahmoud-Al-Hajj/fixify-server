@@ -46,35 +46,30 @@ function mapSummaryRow(row: ProviderSummaryRow): ProviderSummary {
   };
 }
 
-// pc.category_id is served by fk_pc_category (category_id); the joins are on
-// primary keys. The two variants are fixed strings, never built from input.
-const PROVIDERS_IN_CATEGORY_SQL = `SELECT u.id, u.full_name, u.avatar_url, p.area,
+// Providers who offer the category and are accepting jobs, optionally only in
+// one area (exact match; providers.area is plain text). pc.category_id is
+// served by fk_pc_category; the joins are on primary keys. The two variants
+// are fixed strings, never built from input.
+const ACCEPTING_IN_CATEGORY_SQL = `SELECT u.id, u.full_name, u.avatar_url, p.area,
           p.years_experience, p.is_accepting
    FROM provider_categories pc
    JOIN providers p ON p.id = pc.provider_id
    JOIN users u ON u.id = p.id
-   WHERE pc.category_id = ?`;
-
-// Unfiltered: providers who can take the job right now come first.
-const LIST_ALL_IN_CATEGORY_SQL = `${PROVIDERS_IN_CATEGORY_SQL}
-   ORDER BY p.is_accepting DESC, u.full_name, u.id`;
-
-const LIST_BY_ACCEPTING_IN_CATEGORY_SQL = `${PROVIDERS_IN_CATEGORY_SQL}
-   AND p.is_accepting = ?
-   ORDER BY u.full_name, u.id`;
+   WHERE pc.category_id = ? AND p.is_accepting = 1`;
 
 export async function listProvidersByCategory(
   categoryId: number,
-  isAccepting: boolean | null
+  area: string | null
 ): Promise<ProviderSummary[]> {
   const [rows] =
-    isAccepting === null
-      ? await pool.query<ProviderSummaryRow[]>(LIST_ALL_IN_CATEGORY_SQL, [
-          categoryId,
-        ])
+    area === null
+      ? await pool.query<ProviderSummaryRow[]>(
+          `${ACCEPTING_IN_CATEGORY_SQL} ORDER BY u.full_name, u.id`,
+          [categoryId]
+        )
       : await pool.query<ProviderSummaryRow[]>(
-          LIST_BY_ACCEPTING_IN_CATEGORY_SQL,
-          [categoryId, isAccepting]
+          `${ACCEPTING_IN_CATEGORY_SQL} AND p.area = ? ORDER BY u.full_name, u.id`,
+          [categoryId, area]
         );
   return rows.map(mapSummaryRow);
 }

@@ -14,6 +14,9 @@ import {
   type ProviderProfileChanges,
 } from "../models-db/providers";
 import { findCategoryIds } from "../models-db/categories";
+import { listOpenVisitsForProviders } from "../models-db/visits";
+import { beirutNow, wallClockToDate } from "../models-db/format-datetime";
+import { computeFreeWindows } from "./slot-rules";
 import {
   findRatingSummariesForProviders,
   listRecentReviewsForProvider,
@@ -30,20 +33,64 @@ import {
 const PROFILE_REVIEW_LIMIT = 20;
 const NO_RATINGS: RatingSummary = { average: null, count: 0 };
 
-// A category that doesn't exist simply has no providers: an empty list is
-// the true answer, so there is no separate existence check.
+const SLOT_HORIZON_DAYS = 7;
+
+export interface ProviderMatch {
+  provider: ProviderSummary;
+  rating: RatingSummary;
+  earliestSlot: string | null;
+}
+
+// Deterministic matching (no AI): accepting providers in the category (and
+// area), best rated first, then by the earliest free window long enough for
+// the job within SLOT_HORIZON_DAYS. A category with no providers is an empty
+// list, not an error.
 export async function listProvidersByCategory(
   categoryId: number,
-  isAccepting: boolean | null
-): Promise<Array<{ provider: ProviderSummary; rating: RatingSummary }>> {
-  const providers = await listProvidersByCategoryModel(categoryId, isAccepting);
-  const ratings = await findRatingSummariesForProviders(
-    providers.map((provider) => provider.id)
+  area: string | null,
+  durationMinutes: number
+): Promise<ProviderMatch[]> {
+  const providers = await listProvidersByCategoryModel(categoryId, area);
+  const ids = providers.map((provider) => provider.id);
+  const now = beirutNow();
+  const horizonEnd = new Date(
+    Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate() + SLOT_HORIZON_DAYS
+    )
   );
-  return providers.map((provider) => ({
-    provider,
-    rating: ratings.get(provider.id) ?? NO_RATINGS,
-  }));
+  const [ratings, hours, visits] = await Promise.all([
+    findRatingSummariesForProviders(ids),
+    listAvailability(ids),
+    listOpenVisitsForProviders(ids, now, horizonEnd),
+  ]);
+  const matches = providers.map((provider) => {
+    const windows = computeFreeWindows(
+      hours.filter((h) => h.providerId === provider.id),
+      visits
+        .filter((visit) => visit.providerId === provider.id)
+        .map((visit) => ({
+          start: wallClockToDate(visit.scheduledStart),
+          end: wallClockToDate(visit.scheduledEnd),
+        })),
+      now,
+      SLOT_HORIZON_DAYS,
+      durationMinutes
+    );
+    const first = windows[0];
+    return {
+      provider,
+      rating: ratings.get(provider.id) ?? NO_RATINGS,
+      earliestSlot: first ? first.start.toISOString().slice(0, 23) : null,
+    };
+  });
+  // Unrated and fully booked providers go last; ties keep name order.
+  return matches.sort(
+    (a, b) =>
+      (b.rating.average ?? -1) - (a.rating.average ?? -1) ||
+      (a.earliestSlot ?? "~").localeCompare(b.earliestSlot ?? "~")
+  );
 }
 
 export interface ProviderProfileDetails {

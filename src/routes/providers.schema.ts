@@ -11,10 +11,13 @@ export const listProvidersQuerySchema = z.strictObject({
     .regex(/^\d+$/, "Expected a positive whole number")
     .transform(Number)
     .pipe(z.number().int().positive().max(65535)),
-  isAccepting: z
-    .enum(["true", "false"])
-    .transform((value) => value === "true")
-    .optional(),
+  area: z.string().trim().min(1).max(80).optional(),
+  durationMinutes: z
+    .string()
+    .regex(/^\d+$/, "Expected a whole number of minutes")
+    .transform(Number)
+    .pipe(z.number().int().min(15).max(1440))
+    .default(60),
 });
 export type ListProvidersQuery = z.infer<typeof listProvidersQuerySchema>;
 

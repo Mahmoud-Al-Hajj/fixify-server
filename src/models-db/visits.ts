@@ -6,7 +6,11 @@ import type {
 import { pool, isDbError } from "./pool";
 import { formatMysqlDateTime } from "./format-datetime";
 import { ConflictError } from "../constants/errors";
-import { VISIT_STATUS, type VisitStatus } from "../constants/visit-status";
+import {
+  VISIT_STATUS,
+  OPEN_VISIT_STATUSES,
+  type VisitStatus,
+} from "../constants/visit-status";
 
 // Beirut wall-clock, no offset. See pool.ts for the schema-wide convention.
 export interface Visit {
@@ -69,6 +73,26 @@ export async function findOpenVisitsForRequests(
      WHERE request_id IN (?) AND status IN (?)
      ORDER BY request_id, scheduled_start, id`,
     [requestIds, openStatuses]
+  );
+  return rows.map(mapRow);
+}
+
+// Open visits of these providers that overlap [from, to). Served by
+// idx_visits_provider_time (provider_id, scheduled_start, status).
+export async function listOpenVisitsForProviders(
+  providerIds: readonly string[],
+  from: Date,
+  to: Date
+): Promise<Visit[]> {
+  if (providerIds.length === 0) return [];
+  const [rows] = await pool.query<VisitRow[]>(
+    `SELECT id, request_id, provider_id, status, scheduled_start,
+            scheduled_end, actual_start
+     FROM visits
+     WHERE provider_id IN (?) AND status IN (?)
+       AND scheduled_start < ? AND scheduled_end > ?
+     ORDER BY scheduled_start`,
+    [providerIds, OPEN_VISIT_STATUSES, to, from]
   );
   return rows.map(mapRow);
 }

@@ -16,14 +16,16 @@ export async function listProvidersHandler(
   res: Response<unknown, QueryLocals<ListProvidersQuery>>
 ): Promise<void> {
   requireUser(req);
-  const { categoryId, isAccepting } = res.locals.query;
-  const items = await providersService.listProvidersByCategory(
+  const { categoryId, area, durationMinutes } = res.locals.query;
+  const matches = await providersService.listProvidersByCategory(
     categoryId,
-    isAccepting ?? null
+    area ?? null,
+    durationMinutes
   );
-  const providers = items.map(({ provider, rating }) => ({
+  const providers = matches.map(({ provider, rating, earliestSlot }) => ({
     ...provider,
     rating,
+    earliestSlot,
   }));
   res.status(200).json({ providers });
 }
