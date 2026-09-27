@@ -76,24 +76,20 @@ When a customer submits a request (description + photos), the server makes **one
   "confidence": "medium",
   "suggested_category_id": 2,
   "service_type": "repair",
-  "tags": ["water leak", "kitchen", "sink", "under-cabinet"],
   "urgency": "high",
   "estimated_duration_minutes": 90,
-  "estimated_price_range": { "min": 25, "max": 60, "currency": "USD" },
   "provider_brief": "Water pooling under kitchen sink cabinet. Photo shows corrosion at the trap joint. Bring: replacement P-trap, plumber's tape, basin wrench.",
   "customer_message": "This looks like a common trap leak — usually a quick fix."
 }
 ```
 
-That one response feeds **six** different places in the UI:
+That one response feeds **four** different places in the UI:
 
 | Where it appears                                | Feature it satisfies    |
 | ----------------------------------------------- | ----------------------- |
 | Category pre-filled on the request form         | Smart classification    |
-| Tag chips on the booking card                   | Tagging / organisation  |
 | "What we think is wrong" card for the customer  | AI diagnosis            |
 | Provider's job brief + tools to bring           | Job summarisation       |
-| Pre-filled range on the provider's quote screen | AI-assisted pricing     |
 | Duration estimate → slot length in the calendar | Scheduling intelligence |
 
 ### Three non-negotiable rules for AI usage
@@ -143,16 +139,15 @@ That one response feeds **six** different places in the UI:
 - `[P]` Filter by service area
 - `[P]` Filter by service type (repair / installation / maintenance / inspection)
 - `[P]` Natural-language search — "my AC is dripping water" routes to the right category
-- `[P]` Tappable tag chips leading to filtered results
 
 ### 4.4 Request Creation & Smart Intake
 
 - `[E]` Structured request — category, description, address, urgency flag
 - `[P]` Upload up to 4 damage photos
-- `[P]` AI analysis (one call, see §3) returning: suspected problem, confidence, suggested category, service type, tags, urgency, estimated duration, price range, provider brief, customer message
+- `[P]` AI analysis (one call, see §3) returning: suspected problem, confidence, suggested category, service type, urgency, estimated duration, provider brief, customer message
 - `[P]` Every AI-suggested field editable before submit
 - `[P]` Graceful degradation when AI is unavailable
-- `[P]` Raw AI response stored for audit; tags normalised into a queryable table
+- `[P]` Raw AI response stored for audit
 
 ### 4.5 Scheduling
 
@@ -167,7 +162,6 @@ That one response feeds **six** different places in the UI:
 
 ### 4.6 Quoting & Pricing
 
-- `[P]` Provider quote screen pre-filled with the AI price range
 - `[P]` Provider sets the final price, optionally adds a note on what's included
 - `[P]` Customer receives a quote card — price, duration, slot
 - `[P]` Customer accepts or declines
@@ -257,7 +251,7 @@ Quote state is not a job status. It lives in `requests.price_status`
 
 ### 4.12 Job Summary / Receipt
 
-- `[P]` End-of-job summary — job ID, category, type, tags, all visits with dates, agreed price, before/after photos, provider, review
+- `[P]` End-of-job summary — job ID, category, type, all visits with dates, agreed price, before/after photos, provider, review
 - `[P]` Optionally shareable as an image
 
 ### 4.13 Retention
@@ -298,7 +292,7 @@ Two roles, one `users` table. A provider is a `users` row with a matching `provi
 ### 6.4 Data rules
 
 - `agreed_price` and `proposed_price` must be `DECIMAL(10,2)`. **Never a float.**
-- Store the raw AI response as JSON on the request (auditability) **and** normalise tags into `request_tags` (queryability). This hybrid is deliberate and defensible — not laziness in either direction.
+- Store the raw AI response as JSON on the request (auditability).
 - Enable the `trg_reviews_completed` trigger. It is currently written in `db_schema.md` but marked `-- wasnt added`. It is the project's one piece of DB-enforced business logic and a core academic differentiator.
 - The DB does not enforce _which_ status transitions are legal. That belongs in a small state-machine function in the Express business-rule layer, not scattered if-checks.
 
@@ -338,13 +332,13 @@ These were considered and rejected. Do not reintroduce them without an explicit 
 **Customer creates request**
 
 1. Describes the problem, uploads 2 photos.
-2. **AI analyzes** (~3s): "Likely P-trap leak · Plumbing · Repair · ~90 min · $25–60". Every field editable.
+2. **AI analyzes** (~3s): "Likely P-trap leak · Plumbing · Repair · ~90 min". Every field editable.
 3. Browses plumbers filtered by category, sorted by _soonest available_. Cards show rating + "from $30" + "Available tomorrow 2 PM".
 4. Opens a profile: bio, stat strip, before/after work gallery, reviews.
 5. Taps a live 90-minute slot from the calendar.
 6. Submits.
 
-**Provider receives it** 7. Push: "New plumbing repair — kitchen sink leak". 8. Opens the **job brief**: photos, AI diagnosis, tags, requested slot, tools to bring. 9. Taps Quote → price pre-filled at $25–60 → enters $45, adds a note → sends.
+**Provider receives it** 7. Push: "New plumbing repair — kitchen sink leak". 8. Opens the **job brief**: photos, AI diagnosis, requested slot, tools to bring. 9. Taps Quote → sets the price at $45, adds a note → sends.
 
 **Customer decides** 10. Quote card: $45, 90 min, Tue 2 PM. 11. Accept → status `SCHEDULED`, visit created, timeline updates, both sides notified.
 
@@ -367,7 +361,7 @@ These were considered and rejected. Do not reintroduce them without an explicit 
 | Customer Home / Search           | Browse providers                  | Filter, sort, NL search, tap provider                         |
 | Provider Profile (customer view) | Evaluate provider                 | View stats, gallery, reviews; start request                   |
 | New Request — Describe           | Problem + photos                  | Upload, describe, trigger AI                                  |
-| New Request — AI Result          | Review AI analysis                | Edit category/type/tags/urgency                               |
+| New Request — AI Result          | Review AI analysis                | Change trade / urgency                                        |
 | New Request — Pick Slot          | Choose a time                     | Select date + time chip                                       |
 | My Bookings (customer)           | Track jobs                        | Filter by status, open booking                                |
 | Booking Detail                   | Full job view                     | Timeline, visits, quote actions, before/after, cancel, review |
@@ -376,7 +370,7 @@ These were considered and rejected. Do not reintroduce them without an explicit 
 | Job Summary / Receipt            | End-of-job record                 | Share                                                         |
 | Provider Dashboard               | Incoming + active work            | Reject, quote, en route, start, complete                      |
 | Provider Job Brief               | Understand a job before quoting   | Reject, quote                                                 |
-| Provider Quote Screen            | Set a price                       | Adjust AI range, add note, send                               |
+| Provider Quote Screen            | Set a price                       | Enter price, add note, send                                   |
 | Provider Visits / Schedule       | Manage visits                     | Reschedule, extend, add follow-up                             |
 | Provider Profile Edit            | Manage own profile                | Bio, categories, rates, area, hours, accepting toggle         |
 | Provider Working Hours           | Weekly pattern                    | Set per-weekday times                                         |
@@ -396,7 +390,7 @@ _Nothing else has anything to attach to without this._
 
 ### Phase 2 — The multiplier
 
-Photo upload + the single AI intake call + tags + service types.
+Photo upload + the single AI intake call + service types.
 _One phase delivers three separate headline features._
 
 ### Phase 3 — The visible layer
