@@ -26,7 +26,7 @@ export async function createIntakeSessionHandler(
 
 // Photos are exposed as the authenticated route that serves them, never as
 // the storage path.
-function toMessageView(sessionId: string, message: IntakeMessage) {
+export function toMessageView(sessionId: string, message: IntakeMessage) {
   return {
     ...message,
     photos: message.photos.map((photo) => ({

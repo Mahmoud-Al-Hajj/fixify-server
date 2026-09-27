@@ -12,6 +12,7 @@ import {
   createRequestHandler,
   listRequestsHandler,
   getRequestHandler,
+  getIssueCardHandler,
   rejectRequestHandler,
   cancelRequestHandler,
   startRequestHandler,
@@ -41,6 +42,11 @@ requestsRouter.get(
   "/:id",
   validate("params", requestIdParamsSchema),
   getRequestHandler
+);
+requestsRouter.get(
+  "/:id/issue-card",
+  validate("params", requestIdParamsSchema),
+  getIssueCardHandler
 );
 requestsRouter.post(
   "/:id/reject",

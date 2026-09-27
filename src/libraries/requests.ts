@@ -25,6 +25,8 @@ import {
 import { insertJobEvent } from "../models-db/job-events";
 import { beirutNow } from "../models-db/format-datetime";
 import { findReviewForRequest } from "../models-db/reviews";
+import { listIntakeMessages, type IntakeMessage } from "../models-db/intake";
+import { listRequestItems, type RequestItem } from "../models-db/request-items";
 import {
   VISIT_STATUS,
   OPEN_VISIT_STATUSES,
@@ -142,6 +144,31 @@ export async function getRequestForActor(
   const visits = await findVisitsForRequest(request.id);
   const review = await findReviewForRequest(request.id);
   return { request, visits, hasReview: review !== null };
+}
+
+// What the assigned provider reads for a job: the request, the customer's
+// intake conversation (reached only through the request), and the parts list.
+export async function getIssueCard(
+  requestId: string,
+  actorUserId: string
+): Promise<{
+  request: Request;
+  messages: IntakeMessage[];
+  items: RequestItem[];
+}> {
+  const { request, actorRole } = await loadRequestForActor(
+    requestId,
+    actorUserId
+  );
+  if (actorRole !== REQUEST_ACTOR_ROLE.PROVIDER) {
+    throw new ForbiddenError(
+      "Only the assigned provider can open the issue card"
+    );
+  }
+  const messages = request.intakeSessionId
+    ? await listIntakeMessages(request.intakeSessionId)
+    : [];
+  return { request, messages, items: await listRequestItems(request.id) };
 }
 
 async function attachNextVisits(

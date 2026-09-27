@@ -6,6 +6,7 @@ import { REQUEST_ACTOR_ROLE } from "../constants/request-status";
 import { requireUser } from "../middlewares/authenticate";
 import type { QueryLocals, ParamsLocals } from "../middlewares/validate";
 import type { Visit } from "../models-db/visits";
+import { toMessageView } from "./intake";
 import type {
   CreateRequestBody,
   CreateReviewBody,
@@ -178,4 +179,27 @@ export async function createReviewHandler(
     { rating, comment }
   );
   res.status(201).json({ review });
+}
+
+// The diagnosis stays null until the intake-diagnosis AI step exists.
+export async function getIssueCardHandler(
+  req: Request,
+  res: Response<unknown, ParamsLocals<RequestIdParams>>
+): Promise<void> {
+  const user = requireUser(req);
+  const { request, messages, items } = await requestsService.getIssueCard(
+    res.locals.params.id,
+    user.id
+  );
+  const sessionId = request.intakeSessionId;
+  res.status(200).json({
+    issueCard: {
+      request,
+      diagnosis: null,
+      messages: sessionId
+        ? messages.map((message) => toMessageView(sessionId, message))
+        : [],
+      items,
+    },
+  });
 }
