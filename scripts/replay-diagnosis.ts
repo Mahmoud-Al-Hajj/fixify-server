@@ -40,6 +40,7 @@ import { CASES, type DiagnosisCase } from "../fixtures/diagnosis/cases";
 
 const DEFAULT_PAUSE_SECONDS = 13;
 const TIMEOUT_MS = 45_000; // the production timeout (§12.1)
+const SLOW_MS = 30_000; // §14.6: revisit the timeout or thinking level above this
 const FIXTURES_DIR = path.join(__dirname, "..", "fixtures", "diagnosis");
 const PHOTOS_DIR = path.join(FIXTURES_DIR, "photos");
 const RUNS_DIR = path.join(FIXTURES_DIR, "runs");
@@ -70,6 +71,14 @@ interface Options {
   pauseMs: number;
   skipMissing: boolean;
   overrides: DiagnoseOverrides;
+}
+
+// One row of the §14.6 pass bar.
+interface PassBarRow {
+  check: string;
+  count: string;
+  bar: string;
+  result: "met" | "not met" | "partial run" | "not run" | "flag";
 }
 
 interface SkippedCase {
@@ -311,6 +320,161 @@ function summaryRow(call: CallRecord, testCase: DiagnosisCase) {
   };
 }
 
+// Cases whose answers differ between repeats, on the fields that change what
+// the customer sees, whether or not the case checks them. Failed calls are
+// left out (the schema row counts them).
+function findFlips(calls: CallRecord[]): {
+  compared: number;
+  flipped: string[];
+} {
+  const byCase = new Map<string, Diagnosis[]>();
+  for (const call of calls) {
+    if (call.diagnosis) {
+      byCase.set(call.caseId, [
+        ...(byCase.get(call.caseId) ?? []),
+        call.diagnosis,
+      ]);
+    }
+  }
+  const fields: Record<string, (d: Diagnosis) => unknown> = {
+    category: (d) => d.category,
+    isUrgent: (d) => d.isUrgent,
+    safetyNote: (d) => d.safetyNote !== null,
+    confidence: (d) => d.confidence,
+  };
+  let compared = 0;
+  const flipped: string[] = [];
+  for (const [caseId, diagnoses] of byCase) {
+    if (diagnoses.length < 2) continue;
+    compared += 1;
+    const changed = Object.entries(fields)
+      .filter(([, read]) => new Set(diagnoses.map(read)).size > 1)
+      .map(([name]) => name);
+    if (changed.length > 0) flipped.push(`${caseId} (${changed.join(", ")})`);
+  }
+  return { compared, flipped };
+}
+
+// Evaluates the §14.6 pass bar over every call, so with --repeat each case
+// counts once per repeat and the allowed misses scale with it.
+function evaluatePassBar(calls: CallRecord[], repeat: number): PassBarRow[] {
+  const caseOf = (call: CallRecord): DiagnosisCase => {
+    const found = CASES.find((c) => c.id === call.caseId);
+    if (!found) throw new Error(`Unknown case ${call.caseId}`);
+    return found;
+  };
+  const passed = (call: CallRecord, name: string) =>
+    call.checks.some((k) => k.name === name && k.pass);
+  const where = (keep: (c: DiagnosisCase) => boolean) =>
+    calls.filter((call) => keep(caseOf(call)));
+
+  const everyCall = (
+    check: string,
+    subset: CallRecord[],
+    ok: (call: CallRecord) => boolean
+  ): PassBarRow => {
+    const n = subset.filter(ok).length;
+    return {
+      check,
+      count: `${n}/${subset.length}`,
+      bar: "every call",
+      result:
+        subset.length === 0
+          ? "not run"
+          : n === subset.length
+            ? "met"
+            : "not met",
+    };
+  };
+  const atMostMisses = (
+    check: string,
+    subset: CallRecord[],
+    ok: (call: CallRecord) => boolean,
+    missesPerPass: number,
+    partial: boolean
+  ): PassBarRow => {
+    const allowed = missesPerPass * repeat;
+    const misses = subset.filter((call) => !ok(call)).length;
+    return {
+      check,
+      count: `${subset.length - misses}/${subset.length}`,
+      bar: `at most ${allowed} miss${allowed === 1 ? "" : "es"}`,
+      result:
+        subset.length === 0
+          ? "not run"
+          : partial
+            ? "partial run"
+            : misses <= allowed
+              ? "met"
+              : "not met",
+    };
+  };
+
+  const checksCategory = (c: DiagnosisCase) => c.expect.category !== undefined;
+  const categoryCalls = where(checksCategory);
+  const expectsNoNote = (c: DiagnosisCase) => c.expect.safetyNote === false;
+  const noNoteCalls = where(expectsNoNote);
+  const slowest = Math.max(0, ...calls.map((c) => c.latencyMs));
+  const rows: PassBarRow[] = [
+    everyCall("schema valid", calls, (call) => call.diagnosis !== null),
+    everyCall(
+      "safety cases: urgent + safety note",
+      where((c) => c.expect.safetyNote === true),
+      (call) => passed(call, "isUrgent") && passed(call, "safetyNote")
+    ),
+    atMostMisses(
+      "category",
+      categoryCalls,
+      (call) => passed(call, "category"),
+      2,
+      categoryCalls.length < CASES.filter(checksCategory).length * repeat
+    ),
+    everyCall(
+      "service type",
+      where((c) => c.expect.serviceType !== undefined),
+      (call) => passed(call, "serviceType")
+    ),
+    atMostMisses(
+      "no unwanted safety note",
+      noNoteCalls,
+      (call) => passed(call, "safetyNote"),
+      1,
+      noNoteCalls.length < CASES.filter(expectsNoNote).length * repeat
+    ),
+    everyCall(
+      "no Arabic script",
+      calls.filter((call) => call.diagnosis !== null),
+      (call) => passed(call, "english")
+    ),
+    {
+      check: "latency: slowest call",
+      count: `${(slowest / 1000).toFixed(1)}s`,
+      bar: "flag above 30 s",
+      result:
+        calls.length === 0
+          ? "not run"
+          : slowest > TIMEOUT_MS
+            ? "not met"
+            : slowest > SLOW_MS
+              ? "flag"
+              : "met",
+    },
+  ];
+  if (repeat > 1) {
+    const { compared, flipped } = findFlips(calls);
+    rows.push({
+      check: "flips between repeats",
+      count:
+        flipped.length === 0
+          ? `0/${compared}`
+          : `${flipped.length}/${compared}: ${flipped.join("; ")}`,
+      bar: "none (signal only)",
+      result: flipped.length === 0 ? "met" : "flag",
+    });
+  }
+  return rows;
+}
+
 async function main(): Promise<void> {
   if (!env.gemini) {
     console.error(
@@ -359,6 +523,7 @@ async function main(): Promise<void> {
     pauseSeconds: pauseMs / 1000,
     skipped,
     stoppedOnRateLimit: false,
+    passBar: [] as PassBarRow[],
     calls: [] as CallRecord[],
   };
   const file = path.join(
@@ -384,6 +549,7 @@ async function main(): Promise<void> {
     }
   } finally {
     if (run.calls.length > 0) {
+      run.passBar = evaluatePassBar(run.calls, repeat);
       await mkdir(RUNS_DIR, { recursive: true });
       await writeFile(file, `${JSON.stringify(run, null, 2)}\n`);
     }
@@ -397,17 +563,11 @@ async function main(): Promise<void> {
       return summaryRow(call, testCase);
     })
   );
-  const categoryCalls = run.calls.filter(
-    (c) => byId.get(c.caseId)?.expect.category !== undefined
-  );
-  const categoryPassed = categoryCalls.filter((c) =>
-    c.checks.some((k) => k.name === "category" && k.pass)
-  );
+  console.log("Pass bar (§14.6):");
+  console.table(run.passBar);
   console.log(
     [
       `${run.calls.filter((c) => c.pass).length}/${run.calls.length} calls passed`,
-      `category ${categoryPassed.length}/${categoryCalls.length}`,
-      `${run.calls.filter((c) => c.wouldHaveTimedOut).length} over 45 s`,
       skipped.length > 0
         ? `skipped ${skipped.map((s) => s.caseId).join(", ")}`
         : null,
