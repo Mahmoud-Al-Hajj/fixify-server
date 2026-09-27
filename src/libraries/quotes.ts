@@ -74,8 +74,8 @@ const QUOTE_RULES: ReadonlyArray<{
   },
 ];
 
-// targetFor picks the price_status the action moves to, which can depend on
-// the request (declining a revision lands on accepted, not declined).
+// targetFor picks the price_status the action moves to. While in progress, a
+// move to accepted answers a revision, whether it is accepted or declined.
 async function loadForQuoteAction(
   requestId: string,
   actorUserId: string,
@@ -86,6 +86,13 @@ async function loadForQuoteAction(
     actorUserId
   );
   const targetPriceStatus = targetFor(request);
+  if (
+    request.status === REQUEST_STATUS.IN_PROGRESS &&
+    targetPriceStatus === PRICE_STATUS.ACCEPTED &&
+    request.revisedPrice === null
+  ) {
+    throw new ConflictError("No revised quote is waiting.");
+  }
   const move = `quote from '${request.priceStatus}' to '${targetPriceStatus}'`;
   const rule = QUOTE_RULES.find(
     (r) => r.from === request.priceStatus && r.to === targetPriceStatus
