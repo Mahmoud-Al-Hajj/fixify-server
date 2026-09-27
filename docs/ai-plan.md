@@ -324,7 +324,8 @@ Enum values (category, service type, confidence) exactly as listed above.
 - **Compressed on the phone at upload time** (`expo-image-manipulator`): long edge about 1280 px, JPEG about 80%, which gives roughly 200–400 KB. This saves mobile data, image tokens (Gemini bills large images per 768 px tile) and latency. It also turns HEIC into JPEG. The server needs no image library.
 - **At most 6 photos per analysis**, the newest if the session has more.
 - **Read only from paths stored in `intake_photos`**, resolved inside `uploads/intake/`. Never from a path in the request.
-- **Check the existing upload rules** (count per message, size, allowed types) and align them with the points above.
+- **Upload rules** (enforced today, per message): JPEG or PNG only, checked by the file's bytes; at most 5 MB each; at most 5 per message (`src/middlewares/upload.ts`). The message needs text, a photo, or both (`recordCustomerTurn`).
+- No per-session photo limit yet; decided with the rate limiter (item 5).
 
 ### 4.5 Code layout
 
