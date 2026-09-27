@@ -73,6 +73,40 @@ export const proposeQuoteSchema = z.object({
 });
 export type ProposeQuoteBody = z.infer<typeof proposeQuoteSchema>;
 
+// The provider's whole parts list: items with an id are kept (and updated),
+// items without one are new, and existing items left out are removed.
+export const saveRequestItemsSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        id: z.uuid().optional(),
+        name: z.string().trim().min(1).max(120),
+        quantity: z.number().int().min(1).max(65535),
+        unit: z.string().trim().min(1).max(20).nullable().default(null),
+        // Normalised to two decimals so "6.5" and the stored "6.50" compare
+        // equal; the digit limits keep it exact.
+        estimatedUnitPrice: z
+          .string()
+          .regex(
+            PRICE,
+            "Price must be a decimal with at most 8 digits and 2 decimals"
+          )
+          .transform((value) => Number(value).toFixed(2))
+          .nullable()
+          .default(null),
+      })
+    )
+    .max(50)
+    .refine(
+      (items) => {
+        const ids = items.flatMap((item) => (item.id ? [item.id] : []));
+        return new Set(ids).size === ids.length;
+      },
+      { message: "Each item id may appear only once" }
+    ),
+});
+export type SaveRequestItemsBody = z.infer<typeof saveRequestItemsSchema>;
+
 export const createReviewSchema = z.object({
   rating: z.number().int().min(1).max(5),
   comment: z.string().trim().min(1).max(1000).nullable().default(null),

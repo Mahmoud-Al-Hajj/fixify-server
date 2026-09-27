@@ -4,6 +4,7 @@ import { validateBody, validate } from "../middlewares/validate";
 import {
   createRequestSchema,
   createReviewSchema,
+  saveRequestItemsSchema,
   listRequestsQuerySchema,
   proposeQuoteSchema,
   requestIdParamsSchema,
@@ -22,6 +23,7 @@ import {
   declineQuoteHandler,
   acceptQuoteHandler,
   createReviewHandler,
+  saveRequestItemsHandler,
 } from "../controllers/requests";
 
 export const requestsRouter = Router();
@@ -94,4 +96,10 @@ requestsRouter.post(
   validate("params", requestIdParamsSchema),
   validateBody(createReviewSchema),
   createReviewHandler
+);
+requestsRouter.put(
+  "/:id/items",
+  validate("params", requestIdParamsSchema),
+  validateBody(saveRequestItemsSchema),
+  saveRequestItemsHandler
 );

@@ -144,6 +144,21 @@ export interface UpdateRequestStatusInput {
   markCompleted: boolean;
 }
 
+// Locks the request row for the rest of the transaction and returns its
+// current status. Must be the transaction's first read (see "Double-booking"
+// in CLAUDE.md for why).
+export async function lockRequestForUpdate(
+  conn: PoolConnection,
+  id: string
+): Promise<RequestStatus | null> {
+  const [rows] = await conn.query<RequestRow[]>(
+    `SELECT status FROM requests WHERE id = ? FOR UPDATE`,
+    [id]
+  );
+  const row = rows[0];
+  return row ? (row.status as RequestStatus) : null;
+}
+
 // Optimistic concurrency: the row changes only if it is still in the status
 // the caller validated against. Returns false when another writer moved it
 // first, so the caller can fail instead of overwriting that transition.

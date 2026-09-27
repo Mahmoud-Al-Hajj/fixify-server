@@ -9,6 +9,7 @@ export const JOB_EVENT_TYPE = {
   QUOTE_ACCEPTED: "quote_accepted",
   QUOTE_DECLINED: "quote_declined",
   REVIEW_CREATED: "review_created",
+  REQUEST_ITEMS_UPDATED: "request_items_updated",
 } as const;
 
 export type JobEventType = (typeof JOB_EVENT_TYPE)[keyof typeof JOB_EVENT_TYPE];

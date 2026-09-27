@@ -13,6 +13,7 @@ import type {
   ListRequestsQuery,
   ProposeQuoteBody,
   RequestIdParams,
+  SaveRequestItemsBody,
 } from "../routes/requests.schema";
 
 export async function createRequestHandler(
@@ -201,5 +202,20 @@ export async function getIssueCardHandler(
         : [],
       items,
     },
+  });
+}
+
+export async function saveRequestItemsHandler(
+  req: Request,
+  res: Response<unknown, ParamsLocals<RequestIdParams>>
+): Promise<void> {
+  const user = requireUser(req);
+  const { items } = req.body as SaveRequestItemsBody;
+  res.status(200).json({
+    items: await requestsService.saveRequestItems(
+      res.locals.params.id,
+      user.id,
+      items
+    ),
   });
 }
