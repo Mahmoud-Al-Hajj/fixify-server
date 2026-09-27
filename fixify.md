@@ -2,7 +2,7 @@
 
 > **Purpose of this document:** single source of truth for the Fixify project. Any agent or developer picking up work should read this first. It defines what the product is, what has been decided, what is deliberately out of scope, and the order things get built in.
 >
-> **Status:** pre-implementation. Proposal written, schema drafted, scope expanded beyond original MVP.
+> **Status:** in progress.
 > **Last updated:** September 2026
 
 ---
@@ -60,7 +60,7 @@
 
 Stack was chosen deliberately to match what Mahmoud uses professionally. Do not propose swapping it.
 
-Free-tier Gemini data may be used by Google, so only test photos go through it — never real customer photos. The model ID and SDK are not decided yet.
+Free-tier Gemini data may be used by Google, so only test photos go through it — never real customer photos. Model, API and SDK: `docs/ai-plan.md` §5.
 
 ---
 
@@ -68,41 +68,21 @@ Free-tier Gemini data may be used by Google, so only test photos go through it �
 
 **This is the single most important design decision in the project. Read it before touching any AI feature.**
 
-When a customer submits a request (description + photos), the server makes **one** call to the Gemini API and receives **one** structured JSON blob:
-
-```json
-{
-  "suspected_problem": "Likely a failed P-trap seal or loose slip nut under the sink",
-  "confidence": "medium",
-  "suggested_category_id": 2,
-  "service_type": "repair",
-  "urgency": "high",
-  "estimated_duration_minutes": 90,
-  "provider_brief": "Water pooling under kitchen sink cabinet. Photo shows corrosion at the trap joint. Bring: replacement P-trap, plumber's tape, basin wrench.",
-  "customer_message": "This looks like a common trap leak — usually a quick fix."
-}
-```
-
-That one response feeds **four** different places in the UI:
+The AI makes exactly **one** call: the **intake diagnosis**. The customer describes the problem in the intake chat (text and photos) and taps **Get diagnosis**; the model reads the conversation and returns one structured diagnosis. That one response feeds **four** different places in the UI:
 
 | Where it appears                                | Feature it satisfies    |
 | ----------------------------------------------- | ----------------------- |
-| Category pre-filled on the request form         | Smart classification    |
+| Trade pre-selected for matching and booking     | Smart classification    |
 | "What we think is wrong" card for the customer  | AI diagnosis            |
-| Provider's job brief + tools to bring           | Job summarisation       |
+| Provider's issue card + suggested parts list    | Job summarisation       |
 | Duration estimate → slot length in the calendar | Scheduling intelligence |
 
-### Three non-negotiable rules for AI usage
+### Two non-negotiable rules for AI usage
 
 1. **AI proposes, humans confirm — always.** The customer confirms or changes the trade and urgency; the server derives service type and duration from the diagnosis and builds the description from the customer's own messages (`docs/ai-plan.md` §7). No AI output writes directly to a database field without a human touching it. This is correct product design _and_ it protects the live demo when the model gets something wrong.
-2. **Never block on it.** The call runs async. If the API is slow or down, the request still submits; the brief reads "analysis unavailable."
-3. **Store the raw response.** `intake_sessions.ai_diagnosis` (JSON). This gives auditability — you can show what the model said, its confidence, and what the human overrode.
+2. **Never block on it.** If the AI is slow, down, or unsure, the customer picks the trade and books anyway.
 
-### Implementation notes
-
-- Cache the AI response per request. Re-opening a booking must not re-trigger a billed call.
-- The 2–4 second "Analyzing your photos…" spinner is intentional. It makes invisible computation feel substantial.
-- Natural-language search reuses this same pipeline with a shorter prompt.
+**Implementation:** `docs/ai-plan.md`.
 
 ---
 
@@ -138,23 +118,22 @@ That one response feeds **four** different places in the UI:
 - `[P]` Sort by **soonest available** — cards read "Available tomorrow 2 PM"
 - `[P]` Filter by service area
 - `[P]` Filter by service type (repair / installation / maintenance / inspection)
-- `[P]` Natural-language search — "my AC is dripping water" routes to the right category
 
 ### 4.4 Request Creation & Smart Intake
 
 - `[E]` Structured request — category, description, address, urgency flag
-- `[P]` Upload up to 4 damage photos
-- `[P]` AI analysis (one call, see §3) returning: suspected problem, confidence, suggested category, service type, urgency, estimated duration, provider brief, customer message
+- `[P]` Up to 5 photos per intake message, each at most 5 MB, JPEG or PNG only (checked from the file's bytes, not its name or declared type); a message needs text, a photo, or both
+- `[P]` AI diagnosis (one call, see §3)
 - `[P]` Customer confirms or changes the trade and urgency before submit; the server derives service type and duration (`docs/ai-plan.md` §7)
 - `[P]` Graceful degradation when AI is unavailable
-- `[P]` Raw AI response stored for audit
+- `[P]` AI diagnosis stored for audit
 
 ### 4.5 Scheduling
 
 - `[E]` ~~Preferred date~~ — superseded
 - `[E]` ~~Preferred slot (morning/afternoon/evening/anytime)~~ — superseded
 - `[P]` Live bookable slots, generated from the provider's working-hours pattern **minus** already-booked visits
-- `[P]` Slot length auto-sized from the AI's duration estimate, rounded to 30 min
+- `[P]` Slot length from the AI's duration estimate (rounded to 15 min); slot starts on a 30-min grid
 - `[P]` Date strip + time-chip grid picker; past and booked slots greyed out
 - `[P]` Conflict prevention — a booked slot immediately disappears for everyone
 
@@ -291,9 +270,9 @@ Two roles, one `users` table. A provider is a `users` row with a matching `provi
 
 ### 6.4 Data rules
 
-- `agreed_price` and `proposed_price` must be `DECIMAL(10,2)`. **Never a float.**
-- Store the raw AI response as JSON in `intake_sessions.ai_diagnosis` (auditability).
-- Enable the `trg_reviews_completed` trigger. It is currently written in `db_schema.md` but marked `-- wasnt added`. It is the project's one piece of DB-enforced business logic and a core academic differentiator.
+- `price` and `revised_price` must be `DECIMAL(10,2)`. **Never a float.**
+- The AI diagnosis is stored as JSON in `intake_sessions.ai_diagnosis` (auditability; see `docs/ai-plan.md` §3.3).
+- The `trg_reviews_completed` trigger rejects a review unless its request is `completed`. It is the project's one piece of DB-enforced business logic and a core academic differentiator.
 - The DB does not enforce _which_ status transitions are legal. That belongs in a small state-machine function in the Express business-rule layer, not scattered if-checks.
 
 ---
@@ -306,7 +285,7 @@ Two roles, one `users` table. A provider is a `users` row with a matching `provi
 2. **Providers with zero categories** — should they be searchable at all? Needs an explicit rule.
 3. **`requestedStart` accepts past times — deliberately.** Any well-formed, offset-free datetime is accepted, including one in the past; this is not an oversight. Rejecting past times was considered and cut for MVP scope: doing it correctly needs a timezone-aware "current time in Beirut" helper that nothing else in the codebase uses yet. If it becomes a real problem (e.g. providers receive backdated requests in practice), add it later as an isolated Zod refinement plus one helper function — it does not require touching `requestedStart`'s existing DATETIME / `Date.UTC` handling.
 4. **Stale proposal artifact:** the use-case diagram in the proposal lists "submit verification docs" for providers. Verification is **out of scope**. Treat that diagram line as stale.
-5. **Deployment** — not yet decided. Likely Expo EAS build + a small VPS or Railway/Render for the API + managed MySQL. Affects env vars, CORS, and storage for uploaded photos.
+5. **Deployment** — not yet decided. Likely Expo EAS build + a small VPS or Railway/Render for the API + managed MariaDB. Affects env vars, CORS, and storage for uploaded photos.
 6. **Request list pagination** — `GET /requests` returns every request for the chosen role, unpaginated and unfiltered; revisit (with server-side status filtering) if a provider's request volume grows enough to matter.
 7. **Known limitation: JWTs survive a password change.** `POST /users/me/password` does not invalidate tokens already issued — JWTs are stateless and nothing tracks them. Revoking them needs a token-version column (or a blacklist) checked on every authenticated request; judged not worth building for MVP. The stored password-reset token is cleared on change.
 
@@ -324,6 +303,7 @@ These were considered and rejected. Do not reintroduce them without an explicit 
 - Provider verification documents
 - Geospatial / distance-based search (`lat`/`lng`, spatial indexes)
 - Admin web panel
+- Natural-language search (would be a second AI call)
 
 ---
 
@@ -332,8 +312,8 @@ These were considered and rejected. Do not reintroduce them without an explicit 
 **Customer creates request**
 
 1. Describes the problem, uploads 2 photos.
-2. **AI analyzes** (~3s): "Likely P-trap leak · Plumbing · Repair · ~90 min". The customer can change the trade and urgency.
-3. Browses plumbers filtered by category, sorted by _soonest available_. Cards show rating + "from $30" + "Available tomorrow 2 PM".
+2. **AI analyzes** (~3s): "Likely P-trap leak · Plumber · Repair · ~90 min". The customer can change the trade and urgency.
+3. Sees the **recommended providers**: Plumbers in their area who are accepting work, sorted by rating, then by the earliest slot that fits 90 minutes. Cards show rating + "from $30" + "Available tomorrow 2 PM".
 4. Opens a profile: bio, stat strip, before/after work gallery, reviews.
 5. Taps a live 90-minute slot from the calendar.
 6. Submits.
@@ -358,7 +338,7 @@ These were considered and rejected. Do not reintroduce them without an explicit 
 | -------------------------------- | --------------------------------- | ------------------------------------------------------------- |
 | Login / Register                 | Auth entry                        | Submit, forgot password                                       |
 | Forgot / Reset Password          | Recovery                          | Submit                                                        |
-| Customer Home / Search           | Browse providers                  | Filter, sort, NL search, tap provider                         |
+| Customer Home / Search           | Browse providers                  | Filter, sort, tap provider                                    |
 | Provider Profile (customer view) | Evaluate provider                 | View stats, gallery, reviews; start request                   |
 | New Request — Describe           | Problem + photos                  | Upload, describe, trigger AI                                  |
 | New Request — AI Result          | Review AI analysis                | Change trade / urgency                                        |
@@ -368,7 +348,7 @@ These were considered and rejected. Do not reintroduce them without an explicit 
 | Quote Card / Review Quote        | Accept or decline a price         | Accept, decline                                               |
 | Review Form                      | Rate a completed job              | Submit rating + comment                                       |
 | Job Summary / Receipt            | End-of-job record                 | Share                                                         |
-| Provider Dashboard               | Incoming + active work            | Reject, quote, en route, start, complete                      |
+| Provider Dashboard               | Incoming + active work            | Reject, quote, start, complete; en route (not built yet)      |
 | Provider Job Brief               | Understand a job before quoting   | Reject, quote                                                 |
 | Provider Quote Screen            | Set a price                       | Enter price, add note, send                                   |
 | Provider Visits / Schedule       | Manage visits                     | Reschedule, extend, add follow-up                             |
@@ -400,7 +380,7 @@ _Fast to build, disproportionate demo payoff per hour spent._
 
 ### Phase 4 — Optional polish
 
-Provider stats, earnings dashboard, "on my way", natural-language search, maintenance reminders, job receipt.
+Provider stats, earnings dashboard, "on my way", maintenance reminders, job receipt.
 
 > **If only Phases 1–3 are finished, the project is still genuinely strong.** Phase 4 is garnish. Do not start it before 1–3 are solid.
 
