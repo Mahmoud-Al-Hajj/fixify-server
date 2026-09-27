@@ -1,16 +1,24 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import type { PoolConnection } from "mysql2/promise";
 import { withTransaction } from "../models-db/pool";
 import {
   insertIntakeSession,
   insertIntakeMessage,
   insertIntakePhotos,
   findIntakeSession,
+  listIntakeMessages,
   type IntakeSession,
+  type IntakeMessage,
 } from "../models-db/intake";
 import { MESSAGE_SENDER } from "../constants/message-sender";
-import { ValidationError } from "../constants/errors";
+import {
+  ValidationError,
+  NotFoundError,
+  ForbiddenError,
+  ConflictError,
+} from "../constants/errors";
 import { logger } from "../config/logger";
 
 const UPLOADS_DIR = path.resolve("uploads");
@@ -54,32 +62,82 @@ async function removePhotos(urls: readonly string[]): Promise<void> {
   }
 }
 
-export async function createIntakeSession(
-  customerId: string,
-  turn: CustomerTurn
-): Promise<IntakeSession> {
+// Stores the turn's photos, then its message and photo rows in one
+// transaction, after `first` (creating the session, for a first turn). If
+// the transaction fails the files are removed again.
+async function recordCustomerTurn(
+  sessionId: string,
+  turn: CustomerTurn,
+  first?: (conn: PoolConnection) => Promise<void>
+): Promise<number> {
   if (turn.body === null && turn.photos.length === 0) {
     throw new ValidationError("Send a message, a photo, or both");
   }
-  const sessionId = randomUUID();
   const urls = await storePhotos(turn);
   try {
-    await withTransaction(async (conn) => {
-      await insertIntakeSession(conn, { id: sessionId, customerId });
+    return await withTransaction(async (conn) => {
+      if (first) await first(conn);
       const messageId = await insertIntakeMessage(conn, {
         sessionId,
         sender: MESSAGE_SENDER.CUSTOMER,
         body: turn.body,
       });
       await insertIntakePhotos(conn, messageId, urls);
+      return messageId;
     });
   } catch (err) {
     await removePhotos(urls);
     throw err;
   }
+}
+
+export async function createIntakeSession(
+  customerId: string,
+  turn: CustomerTurn
+): Promise<IntakeSession> {
+  const sessionId = randomUUID();
+  await recordCustomerTurn(sessionId, turn, (conn) =>
+    insertIntakeSession(conn, { id: sessionId, customerId })
+  );
   const session = await findIntakeSession(sessionId);
   if (!session) {
     throw new Error("Intake session was created but could not be re-read");
   }
   return session;
+}
+
+// An intake session belongs to its customer; nobody else reaches it by id.
+async function loadOwnSession(
+  sessionId: string,
+  customerId: string
+): Promise<IntakeSession> {
+  const session = await findIntakeSession(sessionId);
+  if (!session) {
+    throw new NotFoundError("Intake session not found");
+  }
+  if (session.customerId !== customerId) {
+    throw new ForbiddenError("This intake session belongs to another customer");
+  }
+  return session;
+}
+
+export async function addCustomerMessage(
+  sessionId: string,
+  customerId: string,
+  turn: CustomerTurn
+): Promise<IntakeMessage> {
+  const session = await loadOwnSession(sessionId, customerId);
+  if (session.requestId !== null) {
+    throw new ConflictError(
+      "This problem has already been booked; describe a new one in a new session"
+    );
+  }
+  const messageId = await recordCustomerTurn(sessionId, turn);
+  const message = (await listIntakeMessages(sessionId)).find(
+    (candidate) => candidate.id === messageId
+  );
+  if (!message) {
+    throw new Error("Intake message was created but could not be re-read");
+  }
+  return message;
 }

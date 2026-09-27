@@ -1,9 +1,12 @@
 import { Router } from "express";
 import { authenticate } from "../middlewares/authenticate";
 import { uploadPhotos } from "../middlewares/upload";
-import { validateBody } from "../middlewares/validate";
-import { customerTurnSchema } from "./intake.schema";
-import { createIntakeSessionHandler } from "../controllers/intake";
+import { validateBody, validate } from "../middlewares/validate";
+import { customerTurnSchema, sessionIdParamsSchema } from "./intake.schema";
+import {
+  createIntakeSessionHandler,
+  addCustomerMessageHandler,
+} from "../controllers/intake";
 
 export const intakeRouter = Router();
 
@@ -14,4 +17,12 @@ intakeRouter.post(
   uploadPhotos,
   validateBody(customerTurnSchema),
   createIntakeSessionHandler
+);
+
+intakeRouter.post(
+  "/:id/messages",
+  validate("params", sessionIdParamsSchema),
+  uploadPhotos,
+  validateBody(customerTurnSchema),
+  addCustomerMessageHandler
 );

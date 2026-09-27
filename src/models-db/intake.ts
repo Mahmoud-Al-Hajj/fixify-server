@@ -11,10 +11,13 @@ import type { MessageSender } from "../constants/message-sender";
 // intake_sessions, intake_messages and intake_photos: one aggregate, always
 // written and read together.
 
+// requestId/providerId: the request booked from this session, if any.
 export interface IntakeSession {
   id: string;
   customerId: string;
   aiStatus: AiStatus;
+  requestId: string | null;
+  providerId: string | null;
   createdAt: string;
 }
 
@@ -22,7 +25,31 @@ interface IntakeSessionRow extends RowDataPacket {
   id: string;
   customer_id: string;
   ai_status: string;
+  request_id: string | null;
+  provider_id: string | null;
   created_at: string;
+}
+
+// photos[].url is the storage path relative to the uploads directory.
+export interface IntakeMessage {
+  id: number;
+  sender: MessageSender;
+  body: string | null;
+  createdAt: string;
+  photos: Array<{ id: number; url: string }>;
+}
+
+interface IntakeMessageRow extends RowDataPacket {
+  id: number;
+  sender: string;
+  body: string | null;
+  created_at: string;
+}
+
+interface IntakePhotoRow extends RowDataPacket {
+  id: number;
+  message_id: number;
+  url: string;
 }
 
 export async function insertIntakeSession(
@@ -59,12 +86,16 @@ export async function insertIntakePhotos(
   ]);
 }
 
+// Served by the primary key and uq_req_intake_session.
 export async function findIntakeSession(
   id: string
 ): Promise<IntakeSession | null> {
   const [rows] = await pool.query<IntakeSessionRow[]>(
-    `SELECT id, customer_id, ai_status, created_at
-     FROM intake_sessions WHERE id = ?`,
+    `SELECT s.id, s.customer_id, s.ai_status, s.created_at,
+            r.id AS request_id, r.provider_id
+     FROM intake_sessions s
+     LEFT JOIN requests r ON r.intake_session_id = s.id
+     WHERE s.id = ?`,
     [id]
   );
   const row = rows[0];
@@ -73,7 +104,36 @@ export async function findIntakeSession(
         id: row.id,
         customerId: row.customer_id,
         aiStatus: row.ai_status as AiStatus,
+        requestId: row.request_id,
+        providerId: row.provider_id,
         createdAt: formatMysqlDateTime(row.created_at),
       }
     : null;
+}
+
+// The conversation in order (by id, not created_at). Served by fk_im_session
+// and fk_ip_message.
+export async function listIntakeMessages(
+  sessionId: string
+): Promise<IntakeMessage[]> {
+  const [messages] = await pool.query<IntakeMessageRow[]>(
+    `SELECT id, sender, body, created_at FROM intake_messages
+     WHERE session_id = ? ORDER BY id`,
+    [sessionId]
+  );
+  if (messages.length === 0) return [];
+  const [photos] = await pool.query<IntakePhotoRow[]>(
+    `SELECT id, message_id, url FROM intake_photos
+     WHERE message_id IN (?) ORDER BY id`,
+    [messages.map((message) => message.id)]
+  );
+  return messages.map((message) => ({
+    id: message.id,
+    sender: message.sender as MessageSender,
+    body: message.body,
+    createdAt: formatMysqlDateTime(message.created_at),
+    photos: photos
+      .filter((photo) => photo.message_id === message.id)
+      .map((photo) => ({ id: photo.id, url: photo.url })),
+  }));
 }
