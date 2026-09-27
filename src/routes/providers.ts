@@ -7,6 +7,7 @@ import {
   updateOwnProviderSchema,
   replaceOwnCategoriesSchema,
   replaceOwnAvailabilitySchema,
+  providerSlotsQuerySchema,
 } from "./providers.schema";
 import {
   listProvidersHandler,
@@ -14,6 +15,7 @@ import {
   updateOwnProviderHandler,
   replaceOwnCategoriesHandler,
   replaceOwnAvailabilityHandler,
+  getProviderSlotsHandler,
 } from "../controllers/providers";
 
 export const providersRouter = Router();
@@ -45,4 +47,10 @@ providersRouter.get(
   "/:id",
   validate("params", providerIdParamsSchema),
   getProviderHandler
+);
+providersRouter.get(
+  "/:id/slots",
+  validate("params", providerIdParamsSchema),
+  validate("query", providerSlotsQuerySchema),
+  getProviderSlotsHandler
 );

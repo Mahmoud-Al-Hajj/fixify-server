@@ -3,6 +3,14 @@ import { requireAtLeastOneField } from "./partial-update.schema";
 
 // Strict, like listRequestsQuerySchema: an unsupported filter must fail loudly
 // rather than be dropped.
+// Job length for slot suggestions; 60 when the customer has no estimate.
+const durationMinutes = z
+  .string()
+  .regex(/^\d+$/, "Expected a whole number of minutes")
+  .transform(Number)
+  .pipe(z.number().int().min(15).max(1440))
+  .default(60);
+
 export const listProvidersQuerySchema = z.strictObject({
   // Parsed from the raw string rather than coerced: coercion turns a missing
   // parameter into NaN, and the error then says "received NaN".
@@ -12,14 +20,12 @@ export const listProvidersQuerySchema = z.strictObject({
     .transform(Number)
     .pipe(z.number().int().positive().max(65535)),
   area: z.string().trim().min(1).max(80).optional(),
-  durationMinutes: z
-    .string()
-    .regex(/^\d+$/, "Expected a whole number of minutes")
-    .transform(Number)
-    .pipe(z.number().int().min(15).max(1440))
-    .default(60),
+  durationMinutes,
 });
 export type ListProvidersQuery = z.infer<typeof listProvidersQuerySchema>;
+
+export const providerSlotsQuerySchema = z.strictObject({ durationMinutes });
+export type ProviderSlotsQuery = z.infer<typeof providerSlotsQuerySchema>;
 
 // Strict so a misspelled field (e.g. "isAcepting") is a 400, not a silent 200
 // that changed nothing. Omitted fields stay as they are; null clears one.

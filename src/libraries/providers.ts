@@ -16,7 +16,7 @@ import {
 import { findCategoryIds } from "../models-db/categories";
 import { listOpenVisitsForProviders } from "../models-db/visits";
 import { beirutNow, wallClockToDate } from "../models-db/format-datetime";
-import { computeFreeWindows } from "./slot-rules";
+import { proposeSlots, SLOT_HORIZON_DAYS } from "./slot-rules";
 import {
   findRatingSummariesForProviders,
   listRecentReviewsForProvider,
@@ -28,12 +28,16 @@ import {
   NotFoundError,
   ForbiddenError,
   ValidationError,
+  ConflictError,
 } from "../constants/errors";
 
 const PROFILE_REVIEW_LIMIT = 20;
 const NO_RATINGS: RatingSummary = { average: null, count: 0 };
 
-const SLOT_HORIZON_DAYS = 7;
+export interface Slot {
+  start: string;
+  end: string;
+}
 
 export interface ProviderMatch {
   provider: ProviderSummary;
@@ -41,10 +45,50 @@ export interface ProviderMatch {
   earliestSlot: string | null;
 }
 
+// Each provider's suggested slots (proposeSlots) from their weekly hours minus
+// open visits. Visits are loaded one day past the horizon because the booking
+// notice can push the first day to tomorrow.
+async function slotsForProviders(
+  ids: readonly string[],
+  durationMinutes: number
+): Promise<Map<string, Slot[]>> {
+  const now = beirutNow();
+  const visitsUntil = new Date(
+    Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate() + SLOT_HORIZON_DAYS + 1
+    )
+  );
+  const [hours, visits] = await Promise.all([
+    listAvailability(ids),
+    listOpenVisitsForProviders(ids, now, visitsUntil),
+  ]);
+  return new Map(
+    ids.map((id) => [
+      id,
+      proposeSlots(
+        hours.filter((h) => h.providerId === id),
+        visits
+          .filter((visit) => visit.providerId === id)
+          .map((visit) => ({
+            start: wallClockToDate(visit.scheduledStart),
+            end: wallClockToDate(visit.scheduledEnd),
+          })),
+        now,
+        durationMinutes
+      ).map((slot) => ({
+        start: slot.start.toISOString().slice(0, 23),
+        end: slot.end.toISOString().slice(0, 23),
+      })),
+    ])
+  );
+}
+
 // Deterministic matching (no AI): accepting providers in the category (and
-// area), best rated first, then by the earliest free window long enough for
-// the job within SLOT_HORIZON_DAYS. A category with no providers is an empty
-// list, not an error.
+// area), best rated first, then by their first suggested slot, so the list
+// agrees with GET /providers/:id/slots. A category with no providers is an
+// empty list, not an error.
 export async function listProvidersByCategory(
   categoryId: number,
   area: string | null,
@@ -52,44 +96,39 @@ export async function listProvidersByCategory(
 ): Promise<ProviderMatch[]> {
   const providers = await listProvidersByCategoryModel(categoryId, area);
   const ids = providers.map((provider) => provider.id);
-  const now = beirutNow();
-  const horizonEnd = new Date(
-    Date.UTC(
-      now.getUTCFullYear(),
-      now.getUTCMonth(),
-      now.getUTCDate() + SLOT_HORIZON_DAYS
-    )
-  );
-  const [ratings, hours, visits] = await Promise.all([
+  const [ratings, slots] = await Promise.all([
     findRatingSummariesForProviders(ids),
-    listAvailability(ids),
-    listOpenVisitsForProviders(ids, now, horizonEnd),
+    slotsForProviders(ids, durationMinutes),
   ]);
-  const matches = providers.map((provider) => {
-    const windows = computeFreeWindows(
-      hours.filter((h) => h.providerId === provider.id),
-      visits
-        .filter((visit) => visit.providerId === provider.id)
-        .map((visit) => ({
-          start: wallClockToDate(visit.scheduledStart),
-          end: wallClockToDate(visit.scheduledEnd),
-        })),
-      now,
-      SLOT_HORIZON_DAYS,
-      durationMinutes
-    );
-    const first = windows[0];
-    return {
-      provider,
-      rating: ratings.get(provider.id) ?? NO_RATINGS,
-      earliestSlot: first ? first.start.toISOString().slice(0, 23) : null,
-    };
-  });
+  const matches = providers.map((provider) => ({
+    provider,
+    rating: ratings.get(provider.id) ?? NO_RATINGS,
+    earliestSlot: slots.get(provider.id)?.[0]?.start ?? null,
+  }));
   // Unrated and fully booked providers go last; ties keep name order.
   return matches.sort(
     (a, b) =>
       (b.rating.average ?? -1) - (a.rating.average ?? -1) ||
       (a.earliestSlot ?? "~").localeCompare(b.earliestSlot ?? "~")
+  );
+}
+
+export async function getProviderSlots(
+  providerId: string,
+  durationMinutes: number
+): Promise<Slot[]> {
+  const profile = await findProviderProfile(providerId);
+  if (!profile) {
+    throw new NotFoundError("Provider not found");
+  }
+  if (!profile.isAccepting) {
+    throw new ConflictError(
+      "This provider is not currently accepting requests"
+    );
+  }
+  return (
+    (await slotsForProviders([providerId], durationMinutes)).get(providerId) ??
+    []
   );
 }
 

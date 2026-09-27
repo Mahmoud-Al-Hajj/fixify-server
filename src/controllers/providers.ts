@@ -9,6 +9,7 @@ import type {
   UpdateOwnProviderBody,
   ReplaceOwnCategoriesBody,
   ReplaceOwnAvailabilityBody,
+  ProviderSlotsQuery,
 } from "../routes/providers.schema";
 
 export async function listProvidersHandler(
@@ -107,4 +108,19 @@ export async function replaceOwnAvailabilityHandler(
       availability
     ),
   });
+}
+
+export async function getProviderSlotsHandler(
+  req: Request,
+  res: Response<
+    unknown,
+    ParamsLocals<ProviderIdParams> & QueryLocals<ProviderSlotsQuery>
+  >
+): Promise<void> {
+  requireUser(req);
+  const slots = await providersService.getProviderSlots(
+    res.locals.params.id,
+    res.locals.query.durationMinutes
+  );
+  res.status(200).json({ slots });
 }

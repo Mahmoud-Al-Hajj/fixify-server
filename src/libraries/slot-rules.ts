@@ -64,3 +64,45 @@ export function computeFreeWindows(
   }
   return free;
 }
+
+export const SLOT_HORIZON_DAYS = 7;
+const NOTICE_MINUTES = 120;
+const GRID_MINUTES = 30;
+const SLOTS_PER_DAY = 3;
+const MAX_SLOTS = 10;
+
+// Suggested bookings for a job of durationMinutes: starts on a 30-minute grid,
+// at least NOTICE_MINUTES after now, within SLOT_HORIZON_DAYS, at most
+// SLOTS_PER_DAY per day and MAX_SLOTS in all, earliest first. Suggestions
+// only: booking re-checks overlap under a lock.
+export function proposeSlots(
+  hours: readonly WeeklyHours[],
+  busy: readonly TimeWindow[],
+  now: Date,
+  durationMinutes: number
+): TimeWindow[] {
+  const grid = GRID_MINUTES * MINUTE_MS;
+  const length = durationMinutes * MINUTE_MS;
+  const earliest = new Date(now.getTime() + NOTICE_MINUTES * MINUTE_MS);
+  const windows = computeFreeWindows(
+    hours,
+    busy,
+    earliest,
+    SLOT_HORIZON_DAYS,
+    durationMinutes
+  );
+  const perDay = new Map<string, number>();
+  const slots: TimeWindow[] = [];
+  for (const window of windows) {
+    let start = Math.ceil(window.start.getTime() / grid) * grid;
+    for (; start + length <= window.end.getTime(); start += grid) {
+      const day = new Date(start).toISOString().slice(0, 10);
+      const taken = perDay.get(day) ?? 0;
+      if (taken === SLOTS_PER_DAY) break;
+      perDay.set(day, taken + 1);
+      slots.push({ start: new Date(start), end: new Date(start + length) });
+      if (slots.length === MAX_SLOTS) return slots;
+    }
+  }
+  return slots;
+}
