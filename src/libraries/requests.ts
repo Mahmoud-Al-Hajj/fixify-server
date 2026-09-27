@@ -331,6 +331,7 @@ async function transitionRequest(input: TransitionInput): Promise<Request> {
       toStatus: input.targetStatus,
       markResponded: input.markResponded,
       markCompleted: input.markCompleted,
+      requireNoRevision: input.markCompleted,
     });
     if (!updated) {
       throw new ConflictError(CHANGED_CONCURRENTLY_MESSAGE);

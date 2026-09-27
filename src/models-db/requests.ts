@@ -144,7 +144,9 @@ const UPDATE_STATUS_SQL = `UPDATE requests
    SET status = ?,
        responded_at = IF(?, COALESCE(responded_at, CURRENT_TIMESTAMP(3)), responded_at),
        completed_at = IF(?, CURRENT_TIMESTAMP(3), completed_at)
-   WHERE id = ? AND status = ?`;
+   WHERE id = ? AND status = ?
+     -- requireNoRevision: only completion sets it, so a job never closes over an unanswered revised quote
+     AND (? = 0 OR revised_price IS NULL)`;
 
 export interface UpdateRequestStatusInput {
   id: string;
@@ -154,6 +156,7 @@ export interface UpdateRequestStatusInput {
   // first response, so a later response never overwrites it.
   markResponded: boolean;
   markCompleted: boolean;
+  requireNoRevision: boolean;
 }
 
 // Locks the request row for the rest of the transaction and returns its
@@ -184,6 +187,7 @@ export async function updateRequestStatus(
     input.markCompleted,
     input.id,
     input.fromStatus,
+    input.requireNoRevision,
   ]);
   return result.affectedRows === 1;
 }
