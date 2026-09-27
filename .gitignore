@@ -119,3 +119,6 @@ dist-ssr/
 
 # Uploaded photos (stored outside the database)
 uploads/
+
+# graphify knowledge-graph output (local tool cache)
+graphify-out/
