@@ -525,6 +525,9 @@ Rules, all load-bearing:
 - **Photos:** at most 6 per analysis (the newest), sent inline as base64, never through
   the Files API. Read only from paths stored in `intake_photos`, resolved inside
   `uploads/intake/`. Photos are compressed on the phone; the server has no image library.
+  Upload rules (`upload.ts`, plus `recordCustomerTurn` for the text-or-photo rule): JPEG
+  or PNG only, checked by the file's bytes; at most 5 MB each; at most 5 per message;
+  each message needs text, a photo, or both.
 - **Timeout and retries:** 45 s per analysis. One retry, only for network errors, 500 and
   503, within the same 45 s; none for 429, 400, blocked or invalid output. A retry does
   not count as an attempt.
@@ -592,6 +595,17 @@ so only test photos go through it — never real customer photos.
   AI is enabled only when both are set; see "Security" for when either is missing.
 - The response schema is a hand-written JSON Schema (`DIAGNOSIS_JSON_SCHEMA`), never
   generated from zod. A unit test keeps it in agreement with `diagnosisSchema`.
+- `gemini.ts` throws errors carrying a `kind` (`rate_limited | provider_error |
+  bad_request | blocked | invalid_output`); the caller adds `timeout` and `crashed`.
+
+### Testing the diagnosis with real photos
+
+- Live Gemini calls run only in `scripts/replay-diagnosis.ts` (`npm run replay`), never
+  in `npm test` or CI.
+- The replay goes through the production path from `buildContent` onward:
+  `buildContent` → `diagnose()` → `JSON.parse` → zod. Only the DB and HTTP are skipped.
+- `fixtures/diagnosis/runs/` is gitignored and may hold raw model output. It is fixture
+  data, not customer data, so the logging rule above does not apply there.
 
 ---
 
