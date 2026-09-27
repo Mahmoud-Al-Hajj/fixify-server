@@ -19,17 +19,9 @@ export async function createRequestHandler(
   res: Response
 ): Promise<void> {
   const customer = requireUser(req);
-  const body = req.body as CreateRequestBody;
   const request = await requestsService.createRequest({
     customerId: customer.id,
-    providerId: body.providerId,
-    categoryId: body.categoryId,
-    serviceType: body.serviceType,
-    description: body.description,
-    addressText: body.addressText,
-    requestedStart: body.requestedStart,
-    estimatedDurationMinutes: body.estimatedDurationMinutes,
-    isUrgent: body.isUrgent,
+    ...(req.body as CreateRequestBody),
   });
   res.status(201).json({ request });
 }

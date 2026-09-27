@@ -47,6 +47,16 @@ import {
   assertVisitTransition,
 } from "./visit-state-machine";
 
+// A request this service just wrote; missing only if deleted concurrently,
+// which no endpoint does.
+export async function rereadRequest(id: string): Promise<Request> {
+  const request = await findRequestById(id);
+  if (!request) {
+    throw new Error("Request was written but could not be re-read");
+  }
+  return request;
+}
+
 export type CreateRequestInput = Omit<InsertRequestInput, "id">;
 
 export async function createRequest(
@@ -94,11 +104,7 @@ export async function createRequest(
     });
   });
 
-  const created = await findRequestById(id);
-  if (!created) {
-    throw new Error("Request was created but could not be re-read");
-  }
-  return created;
+  return rereadRequest(id);
 }
 
 function resolveActorRole(
@@ -223,11 +229,7 @@ async function transitionRequest(input: TransitionInput): Promise<Request> {
     });
   });
 
-  const transitioned = await findRequestById(request.id);
-  if (!transitioned) {
-    throw new Error("Request was transitioned but could not be re-read");
-  }
-  return transitioned;
+  return rereadRequest(request.id);
 }
 
 export async function rejectRequest(
@@ -404,11 +406,7 @@ export async function markRequestPaid(
     });
   });
 
-  const paid = await findRequestById(request.id);
-  if (!paid) {
-    throw new Error("Request was marked paid but could not be re-read");
-  }
-  return paid;
+  return rereadRequest(request.id);
 }
 
 export async function listRequestsForCustomer(

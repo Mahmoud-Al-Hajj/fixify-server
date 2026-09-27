@@ -2,17 +2,13 @@ import jwt from "jsonwebtoken";
 import { env } from "../config/env";
 import { UnauthorizedError } from "../constants/errors";
 
-export interface AccessTokenPayload {
-  sub: string;
-}
-
 export function signAccessToken(userId: string): string {
   return jwt.sign({ sub: userId }, env.jwt.secret, {
     expiresIn: env.jwt.expiresIn as jwt.SignOptions["expiresIn"],
   });
 }
 
-export function verifyAccessToken(token: string): AccessTokenPayload {
+export function verifyAccessToken(token: string): { sub: string } {
   let decoded: string | jwt.JwtPayload;
   try {
     decoded = jwt.verify(token, env.jwt.secret);

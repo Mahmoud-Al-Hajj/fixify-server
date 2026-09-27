@@ -1,11 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { PoolConnection } from "mysql2/promise";
 import { withTransaction } from "../models-db/pool";
-import {
-  findRequestById,
-  updateQuoteState,
-  type Request,
-} from "../models-db/requests";
+import { updateQuoteState, type Request } from "../models-db/requests";
 import { insertVisit, hasOverlappingVisit } from "../models-db/visits";
 import { lockProviderForUpdate } from "../models-db/providers";
 import { insertJobEvent } from "../models-db/job-events";
@@ -20,7 +16,11 @@ import {
 } from "./request-state-machine";
 import { assertQuoteTransition } from "./quote-state-machine";
 import { OPEN_VISIT_STATUSES } from "./visit-state-machine";
-import { loadRequestForActor, CHANGED_CONCURRENTLY_MESSAGE } from "./requests";
+import {
+  loadRequestForActor,
+  rereadRequest,
+  CHANGED_CONCURRENTLY_MESSAGE,
+} from "./requests";
 
 // Quote actions are exposed only for pending requests for now. The in-progress
 // edges in QUOTE_TRANSITIONS belong to revised quotes, which arrive with photo
@@ -72,14 +72,6 @@ async function applyQuoteState(
   }
 }
 
-async function reread(requestId: string): Promise<Request> {
-  const request = await findRequestById(requestId);
-  if (!request) {
-    throw new Error("Request was updated but could not be re-read");
-  }
-  return request;
-}
-
 export async function proposeQuote(
   requestId: string,
   actorUserId: string,
@@ -107,7 +99,7 @@ export async function proposeQuote(
     });
   });
 
-  return reread(request.id);
+  return rereadRequest(request.id);
 }
 
 export async function declineQuote(
@@ -136,7 +128,7 @@ export async function declineQuote(
     });
   });
 
-  return reread(request.id);
+  return rereadRequest(request.id);
 }
 
 export async function acceptQuote(
@@ -216,5 +208,5 @@ export async function acceptQuote(
     });
   });
 
-  return reread(request.id);
+  return rereadRequest(request.id);
 }
