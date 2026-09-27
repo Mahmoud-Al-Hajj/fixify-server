@@ -27,6 +27,8 @@ export interface Request {
   // in pool.ts) — deliberately not converted to number, since money must
   // never become a float. Format for display at the edge.
   price: string | null;
+  // A revised quote awaiting the customer while the job is in progress.
+  revisedPrice: string | null;
   priceStatus: PriceStatus;
   paidAt: string | null;
   createdAt: string;
@@ -48,6 +50,7 @@ interface RequestRow extends RowDataPacket {
   is_urgent: number;
   status: string;
   price: string | null;
+  revised_price: string | null;
   price_status: string;
   paid_at: string | null;
   created_at: string;
@@ -58,7 +61,7 @@ interface RequestRow extends RowDataPacket {
 const REQUEST_COLUMNS = `
   id, customer_id, provider_id, category_id, intake_session_id,
   service_type, description, address_text, requested_start,
-  estimated_duration_minutes, is_urgent, status, price, price_status,
+  estimated_duration_minutes, is_urgent, status, price, revised_price, price_status,
   paid_at, created_at, responded_at, completed_at
 `;
 
@@ -77,6 +80,7 @@ function mapRow(row: RequestRow): Request {
     isUrgent: Boolean(row.is_urgent),
     status: row.status as RequestStatus,
     price: row.price,
+    revisedPrice: row.revised_price,
     priceStatus: row.price_status as PriceStatus,
     paidAt: formatMysqlDateTime(row.paid_at),
     createdAt: formatMysqlDateTime(row.created_at),
@@ -230,6 +234,39 @@ export async function updateQuoteState(
     input.fromPriceStatus,
     input.fromPrice,
   ]);
+  return result.affectedRows === 1;
+}
+
+// A revision move on an in-progress job. applyRevision copies revised_price
+// into price (the customer accepted it) before revised_price is overwritten;
+// single-table SET assignments run left to right. Same optimistic guard as
+// updateQuoteState: false when the row no longer matches.
+export async function updateRevisedQuote(
+  conn: PoolConnection,
+  input: {
+    id: string;
+    status: RequestStatus;
+    fromPriceStatus: PriceStatus;
+    toPriceStatus: PriceStatus;
+    fromRevisedPrice: string | null;
+    newRevisedPrice: string | null;
+    applyRevision: boolean;
+  }
+): Promise<boolean> {
+  const [result] = await conn.query<ResultSetHeader>(
+    `UPDATE requests
+     SET price_status = ?, price = IF(?, revised_price, price), revised_price = ?
+     WHERE id = ? AND status = ? AND price_status = ? AND revised_price <=> ?`,
+    [
+      input.toPriceStatus,
+      input.applyRevision,
+      input.newRevisedPrice,
+      input.id,
+      input.status,
+      input.fromPriceStatus,
+      input.fromRevisedPrice,
+    ]
+  );
   return result.affectedRows === 1;
 }
 

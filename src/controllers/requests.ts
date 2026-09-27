@@ -123,11 +123,12 @@ export async function proposeQuoteHandler(
   res: Response<unknown, ParamsLocals<RequestIdParams>>
 ): Promise<void> {
   const user = requireUser(req);
-  const { price } = req.body as ProposeQuoteBody;
+  const { price, reason } = req.body as ProposeQuoteBody;
   const request = await quotesService.proposeQuote(
     res.locals.params.id,
     user.id,
-    price
+    price,
+    reason ?? null
   );
   res.status(200).json({ request });
 }

@@ -70,6 +70,8 @@ export const proposeQuoteSchema = z.object({
       "Price must be a decimal with at most 8 digits and 2 decimals"
     )
     .refine((value) => /[1-9]/.test(value), "Price must be greater than 0"),
+  // Required for a revised quote (request in progress), rejected otherwise.
+  reason: z.string().trim().min(1).max(500).optional(),
 });
 export type ProposeQuoteBody = z.infer<typeof proposeQuoteSchema>;
 

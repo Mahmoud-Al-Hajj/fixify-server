@@ -135,6 +135,7 @@ CREATE TABLE requests (
   status         VARCHAR(12) NOT NULL DEFAULT 'pending',
 
   price          DECIMAL(10,2),
+  revised_price  DECIMAL(10,2),                         -- a revision awaiting the customer
   price_status   VARCHAR(10) NOT NULL DEFAULT 'none',
   paid_at        DATETIME(3),
 
@@ -289,6 +290,8 @@ ALTER TABLE requests
   ADD CONSTRAINT chk_req_price_status CHECK (
     price_status IN ('none','proposed','accepted','declined')),
   ADD CONSTRAINT chk_req_price CHECK (price IS NULL OR price >= 0),
+  ADD CONSTRAINT chk_req_revised_price CHECK (
+    revised_price IS NULL OR revised_price >= 0),
   ADD CONSTRAINT chk_req_duration CHECK (
     estimated_duration_minutes IS NULL OR
     estimated_duration_minutes BETWEEN 15 AND 1440);

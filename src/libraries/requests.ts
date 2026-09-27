@@ -41,6 +41,7 @@ import {
   type VisitStatus,
 } from "../constants/visit-status";
 import { JOB_EVENT_TYPE, type JobEventType } from "../constants/job-event-type";
+import { PRICE_STATUS } from "../constants/price-status";
 import {
   REQUEST_STATUS,
   REQUEST_ACTOR_ROLE,
@@ -442,6 +443,11 @@ export async function completeRequest(
     markResponded: false,
     markCompleted: true,
     prepare: async (request) => {
+      if (request.priceStatus === PRICE_STATUS.PROPOSED) {
+        throw new ConflictError(
+          "A revised quote is still waiting for the customer's answer"
+        );
+      }
       const visits = await findVisitsForRequest(request.id);
       const inProgress = visits.filter(
         (candidate) => candidate.status === VISIT_STATUS.IN_PROGRESS
