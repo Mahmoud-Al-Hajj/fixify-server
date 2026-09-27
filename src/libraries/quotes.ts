@@ -32,53 +32,48 @@ import {
   CHANGED_CONCURRENTLY_MESSAGE,
 } from "./requests";
 
-// Legal quote moves: who may make each one, and while the request is in which
-// status. Pending moves are the initial quote. In-progress moves are a revised
+// Legal quote moves, and while the request is in which status. Pending moves are the initial quote. In-progress moves are a revised
 // quote for extra work found mid-job; declining a revision keeps the agreed
 // price, so it also lands on accepted.
 const QUOTE_RULES: ReadonlyArray<{
   from: PriceStatus;
   to: PriceStatus;
-  actor: RequestActorRole;
   during: readonly RequestStatus[];
 }> = [
   {
     from: PRICE_STATUS.NONE,
     to: PRICE_STATUS.PROPOSED,
-    actor: REQUEST_ACTOR_ROLE.PROVIDER,
     during: [REQUEST_STATUS.PENDING],
   },
   {
     from: PRICE_STATUS.DECLINED,
     to: PRICE_STATUS.PROPOSED,
-    actor: REQUEST_ACTOR_ROLE.PROVIDER,
     during: [REQUEST_STATUS.PENDING],
   },
   {
     from: PRICE_STATUS.PROPOSED,
     to: PRICE_STATUS.ACCEPTED,
-    actor: REQUEST_ACTOR_ROLE.CUSTOMER,
     during: [REQUEST_STATUS.PENDING, REQUEST_STATUS.IN_PROGRESS],
   },
   {
     from: PRICE_STATUS.PROPOSED,
     to: PRICE_STATUS.DECLINED,
-    actor: REQUEST_ACTOR_ROLE.CUSTOMER,
     during: [REQUEST_STATUS.PENDING],
   },
   {
     from: PRICE_STATUS.ACCEPTED,
     to: PRICE_STATUS.PROPOSED,
-    actor: REQUEST_ACTOR_ROLE.PROVIDER,
     during: [REQUEST_STATUS.IN_PROGRESS],
   },
 ];
 
-// targetFor picks the price_status the action moves to. While in progress, a
+// role is who may take the action at all (checked before any state, so a
+// wrong role is always 403). targetFor picks the price_status it moves to. While in progress, a
 // move to accepted answers a revision, whether it is accepted or declined.
 async function loadForQuoteAction(
   requestId: string,
   actorUserId: string,
+  role: RequestActorRole,
   targetFor: (request: Request) => PriceStatus
 ): Promise<{ request: Request; actorRole: RequestActorRole }> {
   const { request, actorRole } = await loadRequestForActor(
@@ -86,6 +81,10 @@ async function loadForQuoteAction(
     actorUserId
   );
   const targetPriceStatus = targetFor(request);
+  const move = `quote from '${request.priceStatus}' to '${targetPriceStatus}'`;
+  if (actorRole !== role) {
+    throw new ForbiddenError(`A ${actorRole} may not move a ${move}`);
+  }
   if (
     request.status === REQUEST_STATUS.IN_PROGRESS &&
     targetPriceStatus === PRICE_STATUS.ACCEPTED &&
@@ -93,15 +92,11 @@ async function loadForQuoteAction(
   ) {
     throw new ConflictError("No revised quote is waiting.");
   }
-  const move = `quote from '${request.priceStatus}' to '${targetPriceStatus}'`;
   const rule = QUOTE_RULES.find(
     (r) => r.from === request.priceStatus && r.to === targetPriceStatus
   );
   if (!rule) {
     throw new InvalidTransitionError(`Cannot move ${move}`);
-  }
-  if (rule.actor !== actorRole) {
-    throw new ForbiddenError(`A ${actorRole} may not move a ${move}`);
   }
   if (!rule.during.includes(request.status)) {
     throw new InvalidTransitionError(
@@ -172,6 +167,7 @@ export async function proposeQuote(
   const { request } = await loadForQuoteAction(
     requestId,
     actorUserId,
+    REQUEST_ACTOR_ROLE.PROVIDER,
     () => PRICE_STATUS.PROPOSED
   );
   const revising = request.status === REQUEST_STATUS.IN_PROGRESS;
@@ -215,10 +211,14 @@ export async function declineQuote(
   actorUserId: string
 ): Promise<Request> {
   // Declining a revision keeps the agreed price: back to accepted.
-  const { request } = await loadForQuoteAction(requestId, actorUserId, (r) =>
-    r.status === REQUEST_STATUS.IN_PROGRESS
-      ? PRICE_STATUS.ACCEPTED
-      : PRICE_STATUS.DECLINED
+  const { request } = await loadForQuoteAction(
+    requestId,
+    actorUserId,
+    REQUEST_ACTOR_ROLE.CUSTOMER,
+    (r) =>
+      r.status === REQUEST_STATUS.IN_PROGRESS
+        ? PRICE_STATUS.ACCEPTED
+        : PRICE_STATUS.DECLINED
   );
   const declinedRevision =
     request.status === REQUEST_STATUS.IN_PROGRESS
@@ -260,6 +260,7 @@ export async function acceptQuote(
   const { request, actorRole } = await loadForQuoteAction(
     requestId,
     actorUserId,
+    REQUEST_ACTOR_ROLE.CUSTOMER,
     () => PRICE_STATUS.ACCEPTED
   );
   if (request.status === REQUEST_STATUS.IN_PROGRESS) {
