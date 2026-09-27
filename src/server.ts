@@ -1,11 +1,13 @@
 import { env } from "./config/env";
 import { assertDbReachable, assertDbClockIsBeirut } from "./models-db/pool";
+import { assertCategoriesMatchConstants } from "./models-db/categories";
 import { app } from "./app";
 import { logger } from "./config/logger";
 
 async function start(): Promise<void> {
   await assertDbReachable();
   await assertDbClockIsBeirut();
+  await assertCategoriesMatchConstants();
   app.listen(env.port, () => {
     logger.info(`listening on ${env.port}`);
   });

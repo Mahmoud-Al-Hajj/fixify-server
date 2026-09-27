@@ -516,7 +516,7 @@ Rules, all load-bearing:
 ### Rules from the AI plan
 
 - **Attempts cap:** at most 3 analyses per session, failures included, counted in
-  `intake_sessions.analysis_attempts` (migration 004, not written yet).
+  `intake_sessions.analysis_attempts` (migration 004).
 - **Freeze:** once a request references a session, the session takes no new messages
   and no new analyses (409). An analysis already running may still finish. Add-message
   and booking both lock the session row (`SELECT … FOR UPDATE`) in their transaction.

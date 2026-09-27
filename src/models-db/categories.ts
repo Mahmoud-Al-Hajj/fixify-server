@@ -1,5 +1,6 @@
 import type { RowDataPacket } from "mysql2/promise";
 import { pool } from "./pool";
+import { CATEGORY_NAMES } from "../constants/categories";
 
 export interface Category {
   id: number;
@@ -27,4 +28,24 @@ export async function findCategoryIds(
     [ids]
   );
   return rows.map((row) => row.id);
+}
+
+// The AI prompt and the diagnosis schemas name categories from CATEGORY_NAMES,
+// and the server resolves a name to its row, so the table must hold exactly
+// those names: none missing, none extra.
+export async function assertCategoriesMatchConstants(): Promise<void> {
+  const [rows] = await pool.query<Array<RowDataPacket & { name: string }>>(
+    "SELECT name FROM categories"
+  );
+  const inTable = new Set(rows.map((row) => row.name));
+  const expected = new Set<string>(CATEGORY_NAMES);
+  const missing = [...expected].filter((name) => !inTable.has(name));
+  const extra = [...inTable].filter((name) => !expected.has(name));
+  if (missing.length > 0 || extra.length > 0) {
+    const list = (names: string[]) =>
+      names.length > 0 ? names.map((n) => `"${n}"`).join(", ") : "none";
+    throw new Error(
+      `categories table does not match CATEGORY_NAMES in src/constants/categories.ts: missing ${list(missing)}; extra ${list(extra)}`
+    );
+  }
 }
