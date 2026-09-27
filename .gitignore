@@ -122,3 +122,6 @@ uploads/
 
 # graphify knowledge-graph output (local tool cache)
 graphify-out/
+
+# Diagnosis replay runs (raw model output; docs/ai-plan.md §14.4)
+fixtures/diagnosis/runs/

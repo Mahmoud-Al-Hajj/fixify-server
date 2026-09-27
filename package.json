@@ -11,13 +11,15 @@
     "test": "tsx --test \"src/**/*.test.ts\"",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "lint": "tsc --noEmit && prettier --check ."
+    "lint": "tsc --noEmit && tsc -p tsconfig.scripts.json && prettier --check .",
+    "replay": "tsx scripts/replay-diagnosis.ts"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@google/genai": "2.24.0",
     "bcrypt": "^6.0.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
