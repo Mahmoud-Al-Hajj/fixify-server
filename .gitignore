@@ -116,3 +116,6 @@ dist-ssr/
 # MacOS specific system files
 .DS_Store
 .env
+
+# Uploaded photos (stored outside the database)
+uploads/
