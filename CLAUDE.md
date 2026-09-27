@@ -32,6 +32,8 @@ not only by application code.
 reconstruct table shapes from this file, from `docs/PROJECT_SPEC.md`, or from memory —
 those describe intent; the schema describes what exists.
 
+Read `docs/ai-plan.md` before touching intake, analysis, or booking from a session.
+
 All status values, service types, and other enum-like literals live in `src/constants/`.
 Never inline a status string. The same lists are enforced by CHECK constraints in the
 database (see "Schema and constraints" below); the constants file is what keeps the code
@@ -168,7 +170,7 @@ scaffold them, and do not reintroduce them as "while we're here" improvements:
 - Payments, wallets, escrow, or any payment processing (price is a record of an
   agreement; settlement is cash, recorded via `paid_at`)
 - Location or geospatial search, lat/lng columns, distance calculations (`providers.area`
-  is a plain text field and that is the whole feature)
+  is a district name from a fixed list, and that is the whole feature)
 - Provider verification / document upload
 - Messaging between customer and provider in any form, real-time, or websockets (contact
   is a phone call placed by the client; the intake conversation is customer ↔ AI, stored
@@ -180,7 +182,7 @@ scaffold them, and do not reintroduce them as "while we're here" improvements:
 - Multi-provider bidding on one request
 - A `notifications` table (the feed is derived from `job_events` and
   `users.notifications_read_at`)
-- A `request_tags` table (tags live in `intake_sessions.ai_diagnosis`)
+- Tags or a price range from the AI, in any form (cut from the diagnosis)
 - An AI-ranked provider list (matching is a SQL query; see "AI")
 - Invoicing or receipts as persisted documents
 
@@ -471,9 +473,9 @@ deterministic code, not AI.
 
 One call per intake analysis, over the customer's messages and photos, returning one
 structured JSON object: likely fault and confidence, category, service type, estimated
-duration, a short plain-language explanation, urgency, tags, indicative price range, and
-a suggested parts list. That single response feeds the diagnosis the customer sees, the
-provider matching, the defaults on the new request, and the seeded `request_items`.
+duration, a short plain-language explanation, urgency, and a suggested parts list. That
+single response feeds the diagnosis the customer sees, the provider matching, the
+defaults on the new request, and the seeded `request_items`.
 
 Rules, all load-bearing:
 
@@ -488,10 +490,17 @@ Rules, all load-bearing:
    - `pending` — an analysis is running. Only this, never "not started".
    - `done` — `ai_diagnosis` holds a validated diagnosis.
    - `failed` — the analysis failed; the customer continues by manual category search.
-2. **AI proposes, the human confirms.** The customer can edit every derived value
-   (category, service type, duration, description) before booking; the provider can edit
-   every suggested part. Never write an AI output straight to a field as final truth.
-3. **Store the raw response** in `intake_sessions.ai_diagnosis`. It is an audit record.
+
+   Transitions: `none → pending`, `pending → done | failed`, `done | failed → pending`
+   (re-run, retry).
+2. **AI proposes, the human confirms.** The customer confirms or changes the trade and
+   the urgency before booking; the other request values follow the booking table below.
+   The provider can edit every suggested part. Never write an AI output straight to a
+   field as final truth.
+3. **Store the validated diagnosis** in `intake_sessions.ai_diagnosis` as
+   `{ model, promptVersion, diagnosis }`, where `diagnosis` is the zod-validated output:
+   unknown keys dropped, values never edited. On failure `ai_diagnosis` stays `NULL`; a
+   re-run overwrites it. It is an audit record.
    Never rewrite it when a user edits a derived value — the confirmed values go in their
    own columns on the request (`category_id`, `service_type`, `is_urgent`,
    `estimated_duration_minutes`, `description`) and in `request_items`. The original
@@ -502,6 +511,33 @@ Rules, all load-bearing:
 5. **Validate the response before using it.** Parse against a schema; an unknown category
    or service type, a duration outside the CHECK range, or a malformed parts list is a
    failed analysis, not something to coerce silently.
+
+### Rules from the AI plan
+
+- **Attempts cap:** at most 3 analyses per session, failures included, counted in
+  `intake_sessions.analysis_attempts` (migration 004, not written yet).
+- **Freeze:** once a request references a session, the session takes no new messages
+  and no new analyses (409). An analysis already running may still finish. Add-message
+  and booking both lock the session row (`SELECT … FOR UPDATE`) in their transaction.
+- **English only:** every text field the model returns is in English, whatever language
+  the customer writes in.
+- **Photos:** at most 6 per analysis (the newest), sent inline as base64, never through
+  the Files API. Read only from paths stored in `intake_photos`, resolved inside
+  `uploads/intake/`. Photos are compressed on the phone; the server has no image library.
+- **Areas:** `providers.area` and the search `area` parameter are validated against a
+  fixed list of Lebanon's districts plus Beirut, kept in `src/constants/` (not added yet).
+- **Booking from a session:** allowed from any `ai_status`; the session needs at least one
+  customer message with text. The client never sends service type, duration or
+  description. The server derives them at booking time:
+
+  | Situation                                                        | `service_type`, duration | Visit length  | Parts                   |
+  | ---------------------------------------------------------------- | ------------------------ | ------------- | ----------------------- |
+  | diagnosis `done` and `categoryId` = the diagnosis category       | from the diagnosis       | the duration  | seeded, `source = 'ai'` |
+  | trade changed, `none` / `pending` / `failed`, or category `null` | `NULL`                   | 60 minutes    | none                    |
+
+  `description` is the customer's messages in order, joined by blank lines, cut to 2,000
+  characters. A diagnosis that finishes after booking is stored on the session only: it
+  never seeds parts or changes the request.
 
 ### Provider matching is not an AI call
 
@@ -522,14 +558,21 @@ manually. Slots are suggestions only; booking is protected by the double-booking
 ### The call
 
 The API key comes from the typed config module like any other secret. Never log prompt or
-response bodies containing user photos, messages, or addresses. Do not repeat a billed
-call for the same input: re-opening an intake session shows the stored result instead of
-calling the model again. Model output is untrusted input — it goes
-through the same validation as a request body.
+response bodies containing user photos, messages, or addresses (under review, AI plan
+item 5). Do not repeat a billed call for the same input: re-opening an intake session
+shows the stored result instead of calling the model again. Model output is untrusted
+input — it goes through the same validation as a request body.
 
-The provider is the Google Gemini API (free tier); the model ID and SDK are not decided.
-Free-tier data may be used by Google, so only test photos go through it — never real
-customer photos.
+The provider is the Google Gemini API (free tier). Free-tier data may be used by Google,
+so only test photos go through it — never real customer photos.
+
+- The Interactions API, always with `store: false`.
+- SDK `@google/genai`, pinned to an exact version, imported only in
+  `src/libraries/ai/gemini.ts`.
+- `GEMINI_MODEL` and `GEMINI_API_KEY` come from the server's environment, never the app.
+  AI is enabled only when both are set; see "Security" for when either is missing.
+- The response schema is a hand-written JSON Schema (`DIAGNOSIS_JSON_SCHEMA`), never
+  generated from zod. A unit test keeps it in agreement with `diagnosisSchema`.
 
 ---
 
@@ -579,7 +622,10 @@ For both:
   `users` row.
 - Secrets come from environment variables via a single typed config module that fails
   loudly at startup if a required variable is missing. No `process.env` access scattered
-  through the codebase, no fallback defaults for secrets.
+  through the codebase, no fallback defaults for secrets. The one exception is AI: it is
+  enabled only when both `GEMINI_API_KEY` and `GEMINI_MODEL` are set. If either is
+  missing, the server starts with a warning and starting an analysis returns 503. There
+  is no default model in code.
 - `helmet`, `cors` with an explicit origin allowlist, and rate limiting on auth endpoints
   and on the endpoints that trigger the AI call.
 - Login failures return the same generic message and comparable timing whether the email
@@ -664,7 +710,8 @@ in Phase 1 — do not silently fix it as a side effect of another task:
 - [ ] Multi-table writes wrapped in a transaction
 - [ ] Status transitions write their `job_events` row in the same transaction
 - [ ] No enum value inlined as a string literal; constants match the CHECK constraints
-- [ ] AI output never written as final truth; raw response untouched
+- [ ] AI output never written as final truth; stored diagnosis is the validated output,
+      values never edited
 - [ ] Error paths return correct status codes with a consistent body
 - [ ] No secrets, hashes, or tokens reachable from any response
 - [ ] No `any`, no `console.log`, no dead or commented-out code
