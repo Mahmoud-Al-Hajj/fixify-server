@@ -2,16 +2,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   REQUEST_STATUS,
-  ALLOWED_TRANSITIONS,
+  REQUEST_ACTOR_ROLE,
   type RequestStatus,
+  type RequestActorRole,
 } from "../constants/request-status";
 import { InvalidTransitionError, ForbiddenError } from "../constants/errors";
-import {
-  assertRequestTransition,
-  REQUEST_ACTOR_ROLE,
-  TRANSITION_ACTORS,
-  type RequestActorRole,
-} from "./request-state-machine";
+import { assertRequestTransition } from "./request-state-machine";
 
 interface Case {
   from: RequestStatus;
@@ -155,29 +151,5 @@ test("an illegal transition throws InvalidTransitionError even when the actor is
   } catch (err) {
     assert.ok(err instanceof InvalidTransitionError);
     assert.ok(!(err instanceof ForbiddenError));
-  }
-});
-
-test("TRANSITION_ACTORS and ALLOWED_TRANSITIONS encode the same edges", () => {
-  for (const from of Object.values(REQUEST_STATUS)) {
-    const legalTargets = ALLOWED_TRANSITIONS[from];
-    const actorTargets = Object.keys(
-      TRANSITION_ACTORS[from]
-    ) as RequestStatus[];
-
-    for (const to of legalTargets) {
-      const actors = TRANSITION_ACTORS[from][to];
-      assert.ok(
-        actors && actors.length > 0,
-        `ALLOWED_TRANSITIONS has ${from} -> ${to} but TRANSITION_ACTORS has no actors for it`
-      );
-    }
-
-    for (const to of actorTargets) {
-      assert.ok(
-        legalTargets.includes(to),
-        `TRANSITION_ACTORS has ${from} -> ${to} but that is not a legal edge in ALLOWED_TRANSITIONS`
-      );
-    }
   }
 });

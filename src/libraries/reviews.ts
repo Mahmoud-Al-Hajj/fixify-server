@@ -8,7 +8,7 @@ import {
 import { insertJobEvent } from "../models-db/job-events";
 import { JOB_EVENT_TYPE } from "../constants/job-event-type";
 import { ForbiddenError } from "../constants/errors";
-import { REQUEST_ACTOR_ROLE } from "./request-state-machine";
+import { REQUEST_ACTOR_ROLE } from "../constants/request-status";
 import { loadRequestForActor } from "./requests";
 
 export interface CreateReviewInput {

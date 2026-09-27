@@ -8,14 +8,14 @@ import { insertJobEvent } from "../models-db/job-events";
 import { wallClockToDate, beirutNow } from "../models-db/format-datetime";
 import { JOB_EVENT_TYPE } from "../constants/job-event-type";
 import { PRICE_STATUS, type PriceStatus } from "../constants/price-status";
-import { REQUEST_STATUS } from "../constants/request-status";
-import { ConflictError, InvalidTransitionError } from "../constants/errors";
 import {
-  assertRequestTransition,
+  REQUEST_STATUS,
   type RequestActorRole,
-} from "./request-state-machine";
+} from "../constants/request-status";
+import { OPEN_VISIT_STATUSES } from "../constants/visit-status";
+import { ConflictError, InvalidTransitionError } from "../constants/errors";
+import { assertRequestTransition } from "./request-state-machine";
 import { assertQuoteTransition } from "./quote-state-machine";
-import { OPEN_VISIT_STATUSES } from "./visit-state-machine";
 import {
   loadRequestForActor,
   rereadRequest,

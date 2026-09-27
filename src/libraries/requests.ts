@@ -25,11 +25,17 @@ import {
 import { insertJobEvent } from "../models-db/job-events";
 import { beirutNow } from "../models-db/format-datetime";
 import { findReviewForRequest } from "../models-db/reviews";
-import { VISIT_STATUS, type VisitStatus } from "../constants/visit-status";
+import {
+  VISIT_STATUS,
+  OPEN_VISIT_STATUSES,
+  type VisitStatus,
+} from "../constants/visit-status";
 import { JOB_EVENT_TYPE, type JobEventType } from "../constants/job-event-type";
 import {
   REQUEST_STATUS,
+  REQUEST_ACTOR_ROLE,
   type RequestStatus,
+  type RequestActorRole,
 } from "../constants/request-status";
 import {
   NotFoundError,
@@ -37,15 +43,7 @@ import {
   ValidationError,
   ConflictError,
 } from "../constants/errors";
-import {
-  REQUEST_ACTOR_ROLE,
-  assertRequestTransition,
-  type RequestActorRole,
-} from "./request-state-machine";
-import {
-  OPEN_VISIT_STATUSES,
-  assertVisitTransition,
-} from "./visit-state-machine";
+import { assertRequestTransition } from "./request-state-machine";
 
 // A request this service just wrote; missing only if deleted concurrently,
 // which no endpoint does.
@@ -299,14 +297,11 @@ export async function startRequest(
       // Visits come back ordered by scheduled_start, so this is the earliest
       // visit still waiting to start.
       const visit = (await findVisitsForRequest(request.id)).find(
-        (candidate) =>
-          candidate.status === VISIT_STATUS.SCHEDULED ||
-          candidate.status === VISIT_STATUS.EN_ROUTE
+        (candidate) => candidate.status === VISIT_STATUS.SCHEDULED
       );
       if (!visit) {
         throw new ConflictError("This request has no scheduled visit to start");
       }
-      assertVisitTransition(visit.status, VISIT_STATUS.IN_PROGRESS);
       return {
         eventPayload: { visitId: visit.id },
         applyVisitChanges: (conn) =>
@@ -350,7 +345,6 @@ export async function completeRequest(
           "This request still has other open visits; finish or cancel them before completing it"
         );
       }
-      assertVisitTransition(visit.status, VISIT_STATUS.DONE);
       return {
         eventPayload: { visitId: visit.id },
         applyVisitChanges: (conn) =>

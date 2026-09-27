@@ -7,7 +7,7 @@ import { InvalidTransitionError, ForbiddenError } from "../constants/errors";
 import {
   REQUEST_ACTOR_ROLE,
   type RequestActorRole,
-} from "./request-state-machine";
+} from "../constants/request-status";
 
 interface QuoteTransitionRule {
   actor: RequestActorRole;

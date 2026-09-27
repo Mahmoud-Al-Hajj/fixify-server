@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { SERVICE_TYPE } from "../constants/service-type";
-import { REQUEST_ACTOR_ROLE } from "../libraries/request-state-machine";
+import { REQUEST_ACTOR_ROLE } from "../constants/request-status";
 
 const LOCAL_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/;
 const LOCAL_DATETIME_MESSAGE =

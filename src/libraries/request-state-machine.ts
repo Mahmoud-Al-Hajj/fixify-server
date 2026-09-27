@@ -1,24 +1,15 @@
 import {
   REQUEST_STATUS,
-  ALLOWED_TRANSITIONS,
+  REQUEST_ACTOR_ROLE,
   type RequestStatus,
+  type RequestActorRole,
 } from "../constants/request-status";
 import { InvalidTransitionError, ForbiddenError } from "../constants/errors";
 
-export const REQUEST_ACTOR_ROLE = {
-  CUSTOMER: "customer",
-  PROVIDER: "provider",
-} as const;
-
-export type RequestActorRole =
-  (typeof REQUEST_ACTOR_ROLE)[keyof typeof REQUEST_ACTOR_ROLE];
-
-// Which role(s) may perform each specific (current -> target) transition.
-// Derived from the lifecycle diagram: quoting never touches status, so
-// pending -> scheduled is the CUSTOMER accepting a quote, not a provider
-// "accept" action. Kept separate from ALLOWED_TRANSITIONS (legality) —
-// see the consistency test in request-state-machine.test.ts, which keeps
-// the two tables from drifting apart.
+// The request lifecycle: each legal (current -> target) transition and the
+// role(s) allowed to perform it; a pair missing here is illegal. Quoting never
+// touches status, so pending -> scheduled is the CUSTOMER accepting a quote,
+// not a provider "accept" action.
 export const TRANSITION_ACTORS: Record<
   RequestStatus,
   Partial<Record<RequestStatus, readonly RequestActorRole[]>>
@@ -52,14 +43,13 @@ export function assertRequestTransition(
   targetStatus: RequestStatus,
   actorRole: RequestActorRole
 ): void {
-  if (!ALLOWED_TRANSITIONS[currentStatus].includes(targetStatus)) {
+  const allowedActors = TRANSITION_ACTORS[currentStatus][targetStatus];
+  if (!allowedActors) {
     throw new InvalidTransitionError(
       `Cannot transition request from '${currentStatus}' to '${targetStatus}'`
     );
   }
-
-  const allowedActors = TRANSITION_ACTORS[currentStatus][targetStatus];
-  if (!allowedActors?.includes(actorRole)) {
+  if (!allowedActors.includes(actorRole)) {
     throw new ForbiddenError(
       `A ${actorRole} may not transition a request from '${currentStatus}' to '${targetStatus}'`
     );

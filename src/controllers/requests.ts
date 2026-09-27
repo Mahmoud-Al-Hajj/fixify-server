@@ -2,7 +2,7 @@ import type { Request, Response } from "express";
 import * as requestsService from "../libraries/requests";
 import * as quotesService from "../libraries/quotes";
 import * as reviewsService from "../libraries/reviews";
-import { REQUEST_ACTOR_ROLE } from "../libraries/request-state-machine";
+import { REQUEST_ACTOR_ROLE } from "../constants/request-status";
 import { requireUser } from "../middlewares/authenticate";
 import type { QueryLocals, ParamsLocals } from "../middlewares/validate";
 import type { Visit } from "../models-db/visits";
