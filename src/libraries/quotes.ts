@@ -10,23 +10,67 @@ import { JOB_EVENT_TYPE } from "../constants/job-event-type";
 import { PRICE_STATUS, type PriceStatus } from "../constants/price-status";
 import {
   REQUEST_STATUS,
+  REQUEST_ACTOR_ROLE,
+  type RequestStatus,
   type RequestActorRole,
 } from "../constants/request-status";
 import { OPEN_VISIT_STATUSES } from "../constants/visit-status";
-import { ConflictError, InvalidTransitionError } from "../constants/errors";
+import {
+  ConflictError,
+  ForbiddenError,
+  InvalidTransitionError,
+} from "../constants/errors";
 import { assertRequestTransition } from "./request-state-machine";
-import { assertQuoteTransition } from "./quote-state-machine";
 import {
   loadRequestForActor,
   rereadRequest,
   CHANGED_CONCURRENTLY_MESSAGE,
 } from "./requests";
 
-// Quote actions are exposed only for pending requests for now. The in-progress
-// edges in QUOTE_TRANSITIONS belong to revised quotes, which arrive with photo
-// upload. Declining a revision will also have to restore the accepted price
-// from the latest quote_accepted payload, because a revision overwrites
-// requests.price.
+// Legal quote moves: who may make each one, and while the request is in which
+// status. Pending moves are the initial quote. In-progress moves are a revised
+// quote for extra work found mid-job; declining a revision keeps the agreed
+// price, so it also lands on accepted.
+const QUOTE_RULES: ReadonlyArray<{
+  from: PriceStatus;
+  to: PriceStatus;
+  actor: RequestActorRole;
+  during: readonly RequestStatus[];
+}> = [
+  {
+    from: PRICE_STATUS.NONE,
+    to: PRICE_STATUS.PROPOSED,
+    actor: REQUEST_ACTOR_ROLE.PROVIDER,
+    during: [REQUEST_STATUS.PENDING],
+  },
+  {
+    from: PRICE_STATUS.DECLINED,
+    to: PRICE_STATUS.PROPOSED,
+    actor: REQUEST_ACTOR_ROLE.PROVIDER,
+    during: [REQUEST_STATUS.PENDING],
+  },
+  {
+    from: PRICE_STATUS.PROPOSED,
+    to: PRICE_STATUS.ACCEPTED,
+    actor: REQUEST_ACTOR_ROLE.CUSTOMER,
+    during: [REQUEST_STATUS.PENDING, REQUEST_STATUS.IN_PROGRESS],
+  },
+  {
+    from: PRICE_STATUS.PROPOSED,
+    to: PRICE_STATUS.DECLINED,
+    actor: REQUEST_ACTOR_ROLE.CUSTOMER,
+    during: [REQUEST_STATUS.PENDING],
+  },
+  {
+    from: PRICE_STATUS.ACCEPTED,
+    to: PRICE_STATUS.PROPOSED,
+    actor: REQUEST_ACTOR_ROLE.PROVIDER,
+    during: [REQUEST_STATUS.IN_PROGRESS],
+  },
+];
+
+// Quote actions are still exposed only for pending requests; the in-progress
+// rules above take effect with the revised-quote endpoint.
 async function loadForQuoteAction(
   requestId: string,
   actorUserId: string,
@@ -36,15 +80,22 @@ async function loadForQuoteAction(
     requestId,
     actorUserId
   );
-  assertQuoteTransition(
-    request.priceStatus,
-    targetPriceStatus,
-    actorRole,
-    request.status
+  const move = `quote from '${request.priceStatus}' to '${targetPriceStatus}'`;
+  const rule = QUOTE_RULES.find(
+    (r) => r.from === request.priceStatus && r.to === targetPriceStatus
   );
-  if (request.status !== REQUEST_STATUS.PENDING) {
+  if (!rule) {
+    throw new InvalidTransitionError(`Cannot move ${move}`);
+  }
+  if (rule.actor !== actorRole) {
+    throw new ForbiddenError(`A ${actorRole} may not move a ${move}`);
+  }
+  if (
+    !rule.during.includes(request.status) ||
+    request.status !== REQUEST_STATUS.PENDING
+  ) {
     throw new InvalidTransitionError(
-      `Cannot move quote from '${request.priceStatus}' to '${targetPriceStatus}' while the request is '${request.status}'`
+      `Cannot move ${move} while the request is '${request.status}'`
     );
   }
   return { request, actorRole };
