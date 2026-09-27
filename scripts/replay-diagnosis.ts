@@ -5,9 +5,14 @@
 //   npm run replay -- --case burnt-socket            one case
 //   npm run replay -- --repeat 2                     each case twice
 //   npm run replay -- --thinking low --max-output-tokens 2000
+//   npm run replay -- --pause 4                      seconds between calls
+//   npm run replay -- --skip-missing                 skip cases without photos
 //
-// Sequential, ~6 s between calls, stops on the first 429. Writes every call to
-// fixtures/diagnosis/runs/<timestamp>-<model>.json and prints a summary.
+// Sequential, --pause seconds between calls (default 13: gemini-3.8-flash's
+// free tier allows 5 per minute), stops on the first 429. Without
+// --skip-missing a missing photo stops the run before any call. Writes every
+// call to fixtures/diagnosis/runs/<timestamp>-<model>.json and prints a
+// summary.
 
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -33,12 +38,12 @@ import {
 } from "../src/libraries/ai/gemini";
 import { CASES, type DiagnosisCase } from "../fixtures/diagnosis/cases";
 
-const PAUSE_MS = 6_000;
+const DEFAULT_PAUSE_SECONDS = 13;
 const TIMEOUT_MS = 45_000; // the production timeout (§12.1)
 const FIXTURES_DIR = path.join(__dirname, "..", "fixtures", "diagnosis");
 const PHOTOS_DIR = path.join(FIXTURES_DIR, "photos");
 const RUNS_DIR = path.join(FIXTURES_DIR, "runs");
-const ARABIC_SCRIPT = /[؀-ۿ]/;
+const ARABIC_SCRIPT = /[\u0600-\u06FF]/;
 
 interface Check {
   name: string;
@@ -62,7 +67,14 @@ interface CallRecord {
 interface Options {
   cases: DiagnosisCase[];
   repeat: number;
+  pauseMs: number;
+  skipMissing: boolean;
   overrides: DiagnoseOverrides;
+}
+
+interface SkippedCase {
+  caseId: string;
+  missingPhotos: string[];
 }
 
 function parseOptions(): Options {
@@ -72,6 +84,8 @@ function parseOptions(): Options {
       repeat: { type: "string", default: "1" },
       thinking: { type: "string" },
       "max-output-tokens": { type: "string" },
+      pause: { type: "string", default: String(DEFAULT_PAUSE_SECONDS) },
+      "skip-missing": { type: "boolean", default: false },
     },
   });
   const cases = values.case ? CASES.filter((c) => c.id === values.case) : CASES;
@@ -85,10 +99,16 @@ function parseOptions(): Options {
   if (values.thinking !== undefined && thinkingLevel === undefined) {
     throw new Error(`--thinking must be one of ${THINKING_LEVELS.join(", ")}`);
   }
+  const pauseSeconds = Number(values.pause);
+  if (!Number.isFinite(pauseSeconds) || pauseSeconds < 0) {
+    throw new Error("--pause must be a number of seconds, 0 or more");
+  }
   const maxTokens = values["max-output-tokens"];
   return {
     cases,
     repeat,
+    pauseMs: pauseSeconds * 1000,
+    skipMissing: values["skip-missing"],
     overrides: {
       thinkingLevel,
       maxOutputTokens:
@@ -114,17 +134,18 @@ function mimeTypeOf(file: string): string {
   throw new Error(`Unsupported photo type: ${file}`);
 }
 
+function photosOf(testCase: DiagnosisCase): string[] {
+  return testCase.turns.flatMap((t) => t.photos ?? []);
+}
+
 // Reads every photo the selected cases need, before any call is made, so a
-// missing file never wastes quota.
+// missing file never wastes quota. Returns the names it could not find.
 async function loadPhotos(
   cases: DiagnosisCase[]
-): Promise<Map<string, string>> {
-  const names = new Set(
-    cases.flatMap((c) => c.turns.flatMap((t) => t.photos ?? []))
-  );
+): Promise<{ photos: Map<string, string>; missing: Set<string> }> {
   const photos = new Map<string, string>();
-  const missing: string[] = [];
-  for (const name of names) {
+  const missing = new Set<string>();
+  for (const name of new Set(cases.flatMap(photosOf))) {
     try {
       const bytes = await readFile(path.join(PHOTOS_DIR, name));
       photos.set(name, bytes.toString("base64"));
@@ -132,15 +153,10 @@ async function loadPhotos(
       if (!(err instanceof Error && "code" in err && err.code === "ENOENT")) {
         throw err;
       }
-      missing.push(name);
+      missing.add(name);
     }
   }
-  if (missing.length > 0) {
-    throw new Error(
-      `Missing photos in ${PHOTOS_DIR}: ${missing.sort().join(", ")}`
-    );
-  }
-  return photos;
+  return { photos, missing };
 }
 
 // The same message/photo shapes loadAnalysisInput will return in production.
@@ -303,8 +319,27 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  const { cases, repeat, overrides } = parseOptions();
-  const photos = await loadPhotos(cases);
+  const { cases, repeat, pauseMs, skipMissing, overrides } = parseOptions();
+  const { photos, missing } = await loadPhotos(cases);
+  if (missing.size > 0 && !skipMissing) {
+    throw new Error(
+      `Missing photos in ${PHOTOS_DIR}: ${[...missing].sort().join(", ")} (--skip-missing skips those cases)`
+    );
+  }
+  const skipped: SkippedCase[] = cases
+    .map((c) => ({
+      caseId: c.id,
+      missingPhotos: photosOf(c).filter((p) => missing.has(p)),
+    }))
+    .filter((s) => s.missingPhotos.length > 0);
+  const toRun = cases.filter((c) => !skipped.some((s) => s.caseId === c.id));
+  if (skipped.length > 0) {
+    console.log(`Skipping ${skipped.length} case(s) with missing photos:`);
+    for (const s of skipped) {
+      console.log(`  ${s.caseId}: ${s.missingPhotos.join(", ")}`);
+    }
+  }
+  if (toRun.length === 0) throw new Error("No cases left to run");
   const model = env.gemini.model;
 
   const runStartedAt = new Date().toISOString();
@@ -321,6 +356,8 @@ async function main(): Promise<void> {
       .digest("hex")
       .slice(0, 10),
     repeat,
+    pauseSeconds: pauseMs / 1000,
+    skipped,
     stoppedOnRateLimit: false,
     calls: [] as CallRecord[],
   };
@@ -331,8 +368,8 @@ async function main(): Promise<void> {
 
   try {
     outer: for (let r = 1; r <= repeat; r++) {
-      for (const testCase of cases) {
-        if (run.calls.length > 0) await sleep(PAUSE_MS);
+      for (const testCase of toRun) {
+        if (run.calls.length > 0) await sleep(pauseMs);
         console.log(`→ ${testCase.id}${repeat > 1 ? ` #${r}` : ""}`);
         const call = await runCase(testCase, r, photos, overrides);
         run.calls.push(call);
@@ -371,6 +408,9 @@ async function main(): Promise<void> {
       `${run.calls.filter((c) => c.pass).length}/${run.calls.length} calls passed`,
       `category ${categoryPassed.length}/${categoryCalls.length}`,
       `${run.calls.filter((c) => c.wouldHaveTimedOut).length} over 45 s`,
+      skipped.length > 0
+        ? `skipped ${skipped.map((s) => s.caseId).join(", ")}`
+        : null,
       run.stoppedOnRateLimit ? "STOPPED on 429" : null,
     ]
       .filter(Boolean)

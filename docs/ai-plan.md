@@ -497,7 +497,8 @@ Every failure ends in `failed` and the same customer screen (the manual trade pa
 ### 12.2 Retries
 
 - **One retry**, only for network errors, 500 and 503, within the same 45 s budget.
-- **No retry** on 429 (with one user it almost always means the daily quota is gone), 400, blocked or invalid output.
+- **No retry** on 429, 400, blocked or invalid output.
+- **A 429 isn't always the daily quota.** It can also be the per-minute limit; then the provider message says "retry in Ns". How production handles that is decided in step 4.
 - An automatic retry doesn't count as an attempt. The 3-attempt cap counts the customer's taps.
 - **The SDK's built-in retries are turned off** in `gemini.ts` (`retries: { strategy: "none" }`). By default `@google/genai` 2.24.0 retries Interactions calls up to 4 times on 408/409/429/5XX and connection errors, for up to 30 s, which would break the no-retry-on-429 rule. Our single retry lives in `intake-analysis.ts` (step 4).
 
@@ -721,12 +722,17 @@ Some cases accept two categories on purpose: a ceiling stain really could be eit
   npm run replay                              # all cases, current settings
   npm run replay -- --case burnt-socket       # one case
   npm run replay -- --repeat 2                # each case twice
+  npm run replay -- --thinking low --max-output-tokens 2000
+  npm run replay -- --pause 4                 # seconds between calls (default 13)
+  npm run replay -- --skip-missing            # skip cases whose photos are missing
   GEMINI_MODEL=<flash-lite name> npm run replay   # PowerShell: $env:GEMINI_MODEL="…"; npm run replay
   ```
+  - `--pause`: default 13 s, for gemini-3.8-flash's 5 requests per minute. Flash-Lite can use `--pause 4` (15 per minute).
+  - `--skip-missing`: skips cases whose photos are missing, lists them at the start and in the summary, and records them in the run file (`skipped`). Without it, a missing photo stops the run before any call, so an official run can't quietly skip cases. `--case` only checks that case's photos.
 - **First live call:** `npm run replay -- --case no-trade`, before any full run. It checks that Gemini accepts the nullable category enum (`"enum": [...names, null]`); a rejected schema shows up as `bad_request`.
 - **Behaviour:**
-  - sequential, ~6 s pause between calls (adjust to the project's AI Studio limits)
-  - stops on 429 and saves what it has (a free-tier 429 usually means the day's quota is gone)
+  - sequential, `--pause` seconds between calls
+  - stops on 429 and saves what it has (the per-minute limit or the day's quota; the message says which)
   - no retry and no 45 s timeout wrapper: it measures the raw call and flags anything over 45 s as "would have timed out"
 - **Recorded per case**, in `runs/<timestamp>-<model>.json`: raw output text, parsed diagnosis or failure kind, latency, token counts (input, output, thinking if the SDK reports them), each check's pass/fail. The file also records the model, the settings, `PROMPT_VERSION` and a short sha1 of `SYSTEM_INSTRUCTION` (node `crypto`), so uncommitted prompt tweaks are told apart.
 - **Console:** a summary table: case, expected vs actual category, service type, urgent, safety, latency, tokens, pass/fail.
@@ -759,18 +765,22 @@ Some cases accept two categories on purpose: a ceiling stain really could be eit
 
 ### 14.7 Runs: one change at a time
 
+**Free-tier limits** (measured 2026-09-27): `gemini-3.8-flash` 5 RPM / 20 RPD; `gemini-3.5-flash-lite` 15 RPM / 500 RPD. So prompt tuning happens on 3.5 Flash-Lite, and 3.8 Flash's daily quota is spent only on the comparison runs A and B, on separate days.
+
+Run order: C → prompt tweaks and C′ → A → B → D.
+
 | Run | Model | Settings | Purpose |
 |---|---|---|---|
-| A | `gemini-3.8-flash` | SDK defaults | baseline: real tokens, latency, quality |
-| B | `gemini-3.8-flash` | `thinking_level: low` + output cap | faster or cheaper without getting worse? |
-| C | `gemini-3.5-flash-lite` | same as B (only the model changes) | is the smaller model good enough? |
-| C′ | `gemini-3.5-flash-lite` | its default thinking (`minimal`) + the same cap; only if C passes | does it still pass with less thinking? |
+| C | `gemini-3.5-flash-lite` | `thinking_level: low`, no output cap (run A hasn't set one yet) | is the smaller model good enough? Prompt tweaks are rerun here |
+| C′ | `gemini-3.5-flash-lite` | its default thinking (`minimal`), no output cap | does it still pass with less thinking? |
+| A | `gemini-3.8-flash` | SDK defaults | baseline: real tokens, latency, quality (one day's quota) |
+| B | `gemini-3.8-flash` | `thinking_level: low` + output cap from A | faster or cheaper without getting worse? (another day) |
 | D | the winner | `--repeat 2` | flakiness: a case that flips between runs is a prompt problem |
 
-- **Winner:** the cheapest and fastest setup that meets the bar. If close, 3.8 Flash for the quality margin.
+- **Winner:** must meet the §14.6 bar. Prefer the model whose free quota covers a demo (Flash-Lite). If only 3.8 Flash passes, the demo runs on a paid key (about $0.003 per diagnosis, measured on the `no-trade` call).
 - **Thinking levels:** 3.8 Flash supports `low`, `medium` and `high` (default `medium`; `minimal` returns an error), so run B is `low`. 3.5 Flash-Lite supports `minimal` to `high`, default `minimal`.
-- **Output-token cap:** set from run A, about twice the largest **output + thought** tokens seen. `max_output_tokens` includes thinking tokens, while `usage.total_output_tokens` reports output without them (`total_thought_tokens` is separate). A cap that's too low truncates the JSON, which shows up as `invalid_output`, so it isn't silent.
-- **Budget:** 17 calls per full run; A–D plus prompt-tweak reruns ≈ 150 calls, spread over days if the daily limit is low. Run A's token counts replace the §5.1 estimate for the report.
+- **Output-token cap:** the output cap is set per model from that model's own runs: about twice the largest **output + thought** tokens seen (run C for Flash-Lite, run A for 3.8 Flash). `max_output_tokens` includes thinking tokens, while `usage.total_output_tokens` reports output without them (`total_thought_tokens` is separate). A cap that's too low truncates the JSON, which shows up as `invalid_output`, so it isn't silent.
+- **Budget:** 3.8 Flash's 20 RPD fits one full run (17 calls) per day, so A and B take one day each, and D on 3.8 would take two. Flash-Lite's 500 RPD makes prompt tweaks and C/C′/D reruns effectively free. Run A's token counts replace the §5.1 estimate for the report.
 - The chosen model, thinking level and cap become the constants/env defaults in `gemini.ts`. Any prompt or schema change that gets committed bumps `PROMPT_VERSION`.
 
 ### 14.8 Unit tests
