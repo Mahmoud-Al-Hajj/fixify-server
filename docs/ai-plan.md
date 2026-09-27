@@ -1,6 +1,6 @@
 # Fixify: AI plan
 
-2026-09-27. **Approved:** customer flow, items 1 (analysis flow), 2 (diagnosis contract), 3 (prompt and photos), 4 (model, API, SDK). **Open:** items 5–7 (listed at the end).
+2026-09-27. **Approved:** customer flow, items 1 (analysis flow), 2 (diagnosis contract), 3 (prompt and photos), 4 (model, API, SDK), 5 (failure handling, §12), 6 (booking from a session, §13). **Open:** item 7 (listed at the end).
 
 ## 0. Fixed inputs (decided earlier, not reopened)
 
@@ -104,23 +104,23 @@ The reason: a vision call on the free tier takes seconds and can hit a 429, and 
       AND NOT EXISTS (SELECT 1 FROM requests WHERE intake_session_id = ?);
    ```
    The session must also have at least one customer message with text (checked before the UPDATE).
-2. **Background:** load the messages and photos, call Gemini with a timeout (value set in item 5), validate the result with zod.
+2. **Background:** load the messages and photos, call Gemini with a 45 s timeout (§12), validate the result with zod.
 3. **Success, in one transaction:**
    ```sql
    UPDATE intake_sessions SET ai_status = 'done', ai_diagnosis = ?
     WHERE id = ? AND ai_status = 'pending';
    ```
    1 row affected → insert the AI message (`sender = 'ai'`, `body = explanation`). 0 rows → discard the result and log it (a timeout or the sweep already settled the session).
-4. **Failure** (error, timeout, invalid output, refusal): `UPDATE … SET ai_status = 'failed' WHERE id = ? AND ai_status = 'pending'`. Log the raw output, cut to a few KB. No AI message is written.
+4. **Failure** (error, timeout, invalid output, refusal): `UPDATE … SET ai_status = 'failed' WHERE id = ? AND ai_status = 'pending'`. Log it as in §12.4 (raw output only at debug level, first 2 KB). No AI message is written.
 5. The background promise catches everything. No unhandled rejections.
-6. **Startup sweep:** `pending → failed` for sessions left pending by a crash.
+6. **Startup sweep:** `pending → failed` for all pending sessions, no time condition. Assumes one server process (§12.5).
 
 ### 2.5 Endpoints
 
 | Endpoint | Success | Refusals |
 |---|---|---|
-| `POST /intake-sessions/:id/messages` | 201 | 404 not yours · 409 analysis pending · 409 session booked |
-| `POST /intake-sessions/:id/analysis` | 202 `{ aiStatus: "pending" }` | 404 not yours · 400 no text message · 409 already pending · 409 session booked · 429 cap reached · 503 AI not configured · (rate limiter: item 5) |
+| `POST /intake-sessions/:id/messages` | 201 | 404 not yours · 409 analysis pending · 409 session booked · validation error over 20 photos per session |
+| `POST /intake-sessions/:id/analysis` | 202 `{ aiStatus: "pending" }` | 404 not yours · 400 no text message · 409 already pending · 409 session booked · 429 `ANALYSIS_CAP_REACHED` · 429 `ANALYSIS_RATE_LIMITED` (over 10 starts per hour) · 503 AI not configured |
 | `GET /intake-sessions/:id` | 200: messages, photos, `aiStatus`, diagnosis | 404 not yours |
 
 404 for another customer's session means you don't reveal that it exists.
@@ -212,9 +212,9 @@ export type Diagnosis = z.infer<typeof diagnosisSchema>;
 
 - `ai_diagnosis` on success:
   ```json
-  { "model": "<GEMINI_MODEL value>", "promptVersion": 1, "diagnosis": { } }
+  { "model": "<GEMINI_MODEL value>", "promptVersion": 1, "completedAt": "<Beirut wall clock>", "diagnosis": { } }
   ```
-  The stored diagnosis is the model's output after validation. Values are never edited.
+  The stored diagnosis is the model's output after validation. Values are never edited. `completedAt` is set by `markDone` and decides whether a diagnosis was late (§13.4).
 - On failure `ai_diagnosis` stays `NULL`, and the raw output goes to the winston log. (The JSON column would reject invalid output anyway.)
 - **Re-running overwrites `ai_diagnosis`.** Earlier runs survive only as their AI messages (the explanation text).
 
@@ -324,8 +324,7 @@ Enum values (category, service type, confidence) exactly as listed above.
 - **Compressed on the phone at upload time** (`expo-image-manipulator`): long edge about 1280 px, JPEG about 80%, which gives roughly 200–400 KB. This saves mobile data, image tokens (Gemini bills large images per 768 px tile) and latency. It also turns HEIC into JPEG. The server needs no image library.
 - **At most 6 photos per analysis**, the newest if the session has more.
 - **Read only from paths stored in `intake_photos`**, resolved inside `uploads/intake/`. Never from a path in the request.
-- **Upload rules** (enforced today, per message): JPEG or PNG only, checked by the file's bytes; at most 5 MB each; at most 5 per message (`src/middlewares/upload.ts`). The message needs text, a photo, or both (`recordCustomerTurn`).
-- No per-session photo limit yet; decided with the rate limiter (item 5).
+- **Upload rules** (`upload.ts`, and `recordCustomerTurn` for the text-or-photo rule): JPEG or PNG only, checked by the file's bytes; at most 5 MB each; at most 5 per message; each message needs text, a photo, or both; at most 20 photos per session (§12).
 
 ### 4.5 Code layout
 
@@ -383,7 +382,7 @@ const raw = interaction.output_text;        // → JSON.parse → diagnosisSchem
 
 ### 5.5 Timeout and late results
 
-Whether the SDK can cancel a call halfway doesn't matter. If the timeout fires, the session becomes `failed`. If the model answers later anyway, the guarded `UPDATE … WHERE ai_status = 'pending'` affects 0 rows and the result is discarded (§2.4). The timeout value is set in item 5.
+Whether the SDK can cancel a call halfway doesn't matter. If the timeout fires, the session becomes `failed`. If the model answers later anyway, the guarded `UPDATE … WHERE ai_status = 'pending'` affects 0 rows and the result is discarded (§2.4). The timeout is 45 s (§12).
 
 ---
 
@@ -404,14 +403,14 @@ Whether the SDK can cancel a call halfway doesn't matter. If the timeout fires, 
 - **The client sends** `categoryId`, `isUrgent`, `address`, the provider and the slot (the existing booking fields). It does **not** send service type, duration or description.
 - **The server derives the rest, at booking time:**
 
-  | Situation | service_type | estimated_duration_minutes | visit length | parts |
+  | Situation | service_type | estimated_duration_minutes | visit length (at quote acceptance) | parts |
   |---|---|---|---|---|
   | diagnosis `done` and `categoryId` = diagnosis category | from diagnosis | from diagnosis | same | seeded, `source = 'ai'` |
-  | trade changed, or diagnosis `none` / `pending` / `failed` / category `null` | `NULL` | `NULL` | 60 | none |
+  | trade changed, or diagnosis `none` / `pending` / `failed` / category `null` | `NULL` | `NULL` | 60 (`COALESCE`) | none |
 
 - `description` = the customer's messages joined in order with blank lines between them, cut to 2,000 characters. (This is the customer's original text, in their own language.)
-- **A late diagnosis** (finishes after booking) is stored on the session and shown on the issue card, labelled "AI suggestion, arrived after booking". It **doesn't** seed parts or change the request.
-- Everything happens in one transaction: request, visit, parts, REQUEST_CREATED event. The session row is locked `FOR UPDATE` (§2.7).
+- **A late diagnosis** (finishes after booking) is stored on the session and shown on the issue card, labelled "AI suggestion, arrived after booking". It **doesn't** seed parts or change the request. Late = `ai_diagnosis.completedAt` later than `requests.created_at`.
+- Everything happens in one transaction: request, parts, REQUEST_CREATED event. The visit is created later, when the customer accepts the quote, as today; its length is `COALESCE(estimated_duration_minutes, 60)`. The session row is locked `FOR UPDATE` (§2.7). Body, transaction order, event payload and tests: §13.
 
 ---
 
@@ -432,7 +431,10 @@ Shown only once the request is `scheduled`, meaning the provider accepted. The a
 - **CLAUDE.md** (Claude Code):
   - remove price range and tags
   - add: the ai_status meanings (C8), the attempts cap, the freeze rule, the booking derivation table (§7), the areas rule, the English-only AI output rule, the photo rules (§4.4)
-  - add: Interactions API with `store: false` always, `@google/genai` pinned and used only in `gemini.ts`, `GEMINI_MODEL` / `GEMINI_API_KEY` env vars, 503 when the key is missing, hand-written JSON Schema kept in agreement with zod by a test
+  - add: Interactions API with `store: false` always, `@google/genai` pinned and used only in `gemini.ts`, AI enabled only when both `GEMINI_API_KEY` and `GEMINI_MODEL` are set (otherwise 503), hand-written JSON Schema kept in agreement with zod by a test
+  - add (item 5): 45 s timeout; one retry for network/500/503 only; 10 analysis starts per customer per hour; 20 photos per session; the startup sweep assumes one server process and has no time condition
+  - replace the "under review" logging rule with: never log prompts, customer text or photos; model output is logged only when an analysis fails, at debug level, cut to 2 KB
+  - add (item 6): booking body is a union of two strict shapes; booking locks the session row, the visit and provider lock stay at quote acceptance; visit length at acceptance = `COALESCE(estimated_duration_minutes, 60)`; `deriveBookingFields` and `buildDescription` are pure and unit-tested (tests rule extended); REQUEST_CREATED payload fields; `completedAt` in the `ai_diagnosis` wrapper and the late rule
 - **Proposal** (Mahmoud):
   - Gemini instead of Anthropic
   - deterministic slots instead of AI slots (one sentence of reasoning)
@@ -451,9 +453,11 @@ Shown only once the request is `scheduled`, meaning the provider accepted. The a
   - server-built description
   - calendar button gated on `scheduled`
   - photo compression on the phone
+  - per-customer analysis limit and the 20-photo session cap
 - **Later:**
   - intake history list (`GET /intake-sessions` plus a screen)
   - AI output in the customer's language
+  - a limit on sessions per customer
 - **Cut:**
   - AI asking follow-up questions
   - fake conversational replies
@@ -463,11 +467,185 @@ Shown only once the request is `scheduled`, meaning the provider accepted. The a
   - AI slots
   - the Files API
   - generating the JSON Schema from zod
+  - natural-language search (would be a second AI call)
+  - concurrency limiter, backoff queue, circuit breaker, failure-reason column
 
 ---
 
-## Open: items 5–7
+## 12. Failure handling (item 5)
 
-5. **Failure handling:** timeout value, retry on 429 (or not), rate limiter per user, sweep details, logging.
-6. **B8 remainder:** exact request body, transaction order, event payload, tests.
-7. **Testing cheaply:** a fixture set of real test photos, a way to replay them, what gets asserted, and the 3.8 Flash vs Flash-Lite comparison.
+Every failure ends in `failed` and the same customer screen (the manual trade path). The kind of failure matters only for retries and logs.
+
+| What happens | Example | What we do |
+|---|---|---|
+| Network error, Gemini 500/503 | model overloaded | retry once after ~2 s, then fail |
+| Gemini 429 | free quota used up | fail right away, no retry |
+| Gemini 400 | our schema or request is wrong | fail, log loudly (it's a bug) |
+| Blocked or empty output | safety filter, empty `output_text` | fail |
+| Invalid output | bad JSON, zod rejects it | fail; customer can tap Try again |
+| Too slow | slow call + thinking | 45 s timeout → fail |
+| Server crash mid-call | deploy, OOM | startup sweep → fail |
+
+### 12.1 Timeout: 45 s
+
+- The client polls for 60 s. The server settles first, with room for one more poll.
+- The call races a timer. If the timer wins, the session becomes `failed`; a late answer hits the guarded `UPDATE … WHERE ai_status = 'pending'` and is discarded. Pass an abort signal too if the SDK accepts one.
+- **Low thinking level** and a **max output-token cap**, both compared against the defaults in item 7. Claude Code checks the parameter names in the pinned SDK.
+
+### 12.2 Retries
+
+- **One retry**, only for network errors, 500 and 503, within the same 45 s budget.
+- **No retry** on 429 (with one user it almost always means the daily quota is gone), 400, blocked or invalid output.
+- An automatic retry doesn't count as an attempt. The 3-attempt cap counts the customer's taps.
+
+### 12.3 Rate limits
+
+- **10 analysis starts per customer per hour** → 429 `ANALYSIS_RATE_LIMITED` (the per-session cap stays 429 `ANALYSIS_CAP_REACHED`). Reuse `express-rate-limit` (already installed, used for auth), keyed by customer id, mounted after `authenticate`, with a handler that returns the standard `{ error: { code, message } }` shape. Memory store: a restart resets it, which is fine.
+- **20 photos per session**, checked in `recordCustomerTurn` inside a transaction that locks the session row (`SELECT … FOR UPDATE`, not built yet; the freeze rule needs the same lock, so build it once). Only the 6 newest go to Gemini, so this cap is about disk space.
+
+### 12.4 Logging
+
+- Never log prompts, customer text or photos.
+- Success (`info`): sessionId, model, promptVersion, durationMs, attempt number, category, confidence, token counts if available.
+- Failure (`warn`): sessionId, model, promptVersion, durationMs, `kind`, HTTP status if any, zod issue paths if invalid.
+- Failure (`debug`): the raw model output, first 2 KB. Production runs at `info`, so it's only written in development.
+- `kind` = `timeout | rate_limited | provider_error | bad_request | blocked | invalid_output | crashed`, for logs only. No column.
+
+### 12.5 Startup sweep
+
+`UPDATE intake_sessions SET ai_status = 'failed' WHERE ai_status = 'pending'`, once at startup, before accepting requests. No time condition: with **one server process** (write this assumption in CLAUDE.md), nothing else can be running an analysis at startup, and a condition like `updated_at < NOW() - INTERVAL 2 MINUTE` would leave a session stuck in `pending` after a quick restart (`tsx watch` restarts on every save). Running more than one instance would need a heartbeat or a job queue instead. No timer-based sweep: the timeout settles everything in a running process.
+
+### 12.6 How it fits together
+
+```ts
+// src/libraries/intake-analysis.ts (sketch; names follow the codebase)
+const TIMEOUT_MS = 45_000;
+
+export function startAnalysis(sessionId: string): void {
+  // Not awaited: the POST already returned 202.
+  void runAnalysis(sessionId).catch((err) =>
+    logger.error("analysis crashed", { sessionId, kind: "crashed", err }),
+  );
+}
+
+async function runAnalysis(sessionId: string): Promise<void> {
+  const startedAt = Date.now();
+  try {
+    const input = await loadAnalysisInput(sessionId);            // messages + up to 6 newest photos
+    const diagnosis = await withTimeout(
+      retryOnceIfTransient(() => diagnose(input)),               // gemini.ts: call + JSON.parse + zod
+      TIMEOUT_MS,
+    );
+    await markDone(sessionId, diagnosis);                        // guarded UPDATE + AI message, one transaction
+    logger.info("analysis done", { sessionId, durationMs: Date.now() - startedAt });
+  } catch (err) {
+    await markFailed(sessionId);                                 // guarded UPDATE … WHERE ai_status = 'pending'
+    logger.warn("analysis failed", { sessionId, durationMs: Date.now() - startedAt, kind: classify(err) });
+  }
+}
+```
+
+If `markFailed` itself throws (DB down), the outer `.catch` logs it and the session stays `pending` until the next restart sweeps it. The client stops polling at 60 s and shows the failed state anyway.
+
+---
+
+## 13. Booking from a session: details (item 6)
+
+One transaction locks the session first, derives the fields with a pure function, and reuses the existing booking steps unchanged.
+
+### 13.1 Request body: two strict shapes
+
+```ts
+const bookingBase = { providerId, categoryId, addressText, requestedStart, isUrgent }; // existing validators
+
+const fromSearch = z.object({
+  ...bookingBase,
+  description: /* existing */, serviceType: /* existing */, estimatedDurationMinutes: /* existing */,
+}).strict();
+
+const fromSession = z.object({ ...bookingBase, intakeSessionId: z.string().uuid() }).strict();
+
+export const createRequestSchema = z.union([fromSession, fromSearch]);
+```
+
+Sending `description`, `serviceType` or `estimatedDurationMinutes` together with `intakeSessionId` matches neither shape → 400. The search path is unchanged. Claude Code uses the existing field names and validators.
+
+### 13.2 Derived fields: pure functions
+
+```ts
+// src/libraries/booking-from-session.ts
+export function deriveBookingFields(
+  session: { aiStatus: AiStatus; diagnosis: Diagnosis | null },
+  chosenCategoryName: string,
+) {
+  const d = session.aiStatus === "done" ? session.diagnosis : null;
+  if (d && d.category === chosenCategoryName) {
+    return {
+      usedDiagnosis: true,
+      serviceType: d.serviceType,
+      estimatedDurationMinutes: d.durationMinutes,
+      parts: d.suggestedParts,
+    };
+  }
+  return { usedDiagnosis: false, serviceType: null, estimatedDurationMinutes: null, parts: [] };
+}
+
+export function buildDescription(customerBodies: (string | null)[]): string | null {
+  const text = customerBodies.map((b) => b?.trim()).filter(Boolean).join("\n\n");
+  return text ? text.slice(0, 2000) : null;   // null → SESSION_HAS_NO_TEXT
+}
+
+// Visit length wherever a duration is needed (slot check, quote acceptance):
+// estimatedDurationMinutes ?? DEFAULT_VISIT_MINUTES (60, the same constant B7's slot search uses)
+```
+
+A diagnosis with `category: null` never matches, so it takes the no-diagnosis branch without a special case.
+
+### 13.3 Transaction order
+
+1. Before BEGIN: zod body (400), role = customer (existing 403).
+2. `SELECT … FROM intake_sessions WHERE id = ? FOR UPDATE`. Not found or not this customer's → 404.
+3. A request already exists for the session → 409 `SESSION_ALREADY_BOOKED`. The unique key `uq_req_intake_session` backs it: its duplicate-key error returns the same 409.
+4. Customer messages → `buildDescription`. `null` → 400 `SESSION_HAS_NO_TEXT`.
+5. Category name for `categoryId` → `deriveBookingFields`.
+6. Existing booking steps, unchanged (category and provider checks, requested-start checks, INSERT request with `intake_session_id` set). Any duration check uses `estimatedDurationMinutes ?? 60`. No visit here.
+7. Parts: one multi-row INSERT into `request_items` (`source = 'ai'`, unit price NULL).
+8. INSERT `job_events` REQUEST_CREATED. COMMIT.
+
+Later, at quote acceptance (existing code): the visit is created with length `COALESCE(estimated_duration_minutes, 60)`. That `COALESCE` is the one change to the accept step.
+
+- **Lock order:** booking locks only the session row. The provider lock and the visit stay at quote acceptance, as today. Add-message and the analysis finish also touch only the session, so nothing deadlocks.
+- **Pending at booking:** the analysis finish UPDATE waits for the booking to commit, then writes `done` as a late diagnosis (card only, no parts). Finished before booking: booking uses it.
+- **Edge case:** the customer skipped, saw slots for 60 min, and the diagnosis landed just before Book with the same trade and a longer duration. The request then carries the longer duration, and the slot may not fit it when the quote is accepted → the existing slot 409; the customer picks another time.
+
+### 13.4 Event payload and the late label
+
+- REQUEST_CREATED payload: `{ source: "intake" | "search", intakeSessionId, aiStatusAtBooking, usedDiagnosis, partsSeeded }`. The diagnosis itself isn't copied; it lives on the session.
+- The `ai_diagnosis` wrapper gets `completedAt` (Beirut wall clock), set by `markDone` (§3.3).
+- **Late = `completedAt` later than `requests.created_at`.** No new column. A changed trade shows as the diagnosis next to the request's own category.
+- The `201` response keeps today's shape. No new read endpoint.
+
+### 13.5 Freeze rule and photo cap: built in B8
+
+Add-message takes `SELECT … FOR UPDATE` on the session and refuses: 409 if a request exists, 409 if the analysis is pending, validation error over 20 photos per session. Analysis start already refuses booked sessions through its guarded UPDATE (§2.4).
+
+### 13.6 Tests
+
+- **Unit tests** (added to the tests rule, next to the state machine and slot rules):
+  - `deriveBookingFields`: done + same trade · done + other trade · done + `null` category · pending · failed · none.
+  - `buildDescription`: joined in order · empty and blank skipped · all empty → `null` · cut to 2,000.
+- **Manual checks, shown before committing:**
+  1. `done` session, same trade → diagnosis fields, parts seeded, `usedDiagnosis: true`.
+  2. Same session again → 409 `SESSION_ALREADY_BOOKED`.
+  3. `failed` session → fields NULL, no parts; after quote acceptance the visit is 60 min.
+  4. `intakeSessionId` + `description` → 400.
+  5. Another customer's session → 404.
+  6. Photos-only session → 400 `SESSION_HAS_NO_TEXT`.
+  7. Add a message after booking → 409.
+  8. Late case: session `pending`, book, then run the finish UPDATE → `done`, no parts added, card shows it as late.
+
+---
+
+## Open: item 7
+
+7. **Testing cheaply:** a fixture set of real test photos, a way to replay them, what gets asserted, the 3.8 Flash vs Flash-Lite comparison, thinking level and output-token cap.

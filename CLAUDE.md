@@ -498,9 +498,10 @@ Rules, all load-bearing:
    The provider can edit every suggested part. Never write an AI output straight to a
    field as final truth.
 3. **Store the validated diagnosis** in `intake_sessions.ai_diagnosis` as
-   `{ model, promptVersion, diagnosis }`, where `diagnosis` is the zod-validated output:
-   unknown keys dropped, values never edited. On failure `ai_diagnosis` stays `NULL`; a
-   re-run overwrites it. It is an audit record.
+   `{ model, promptVersion, completedAt, diagnosis }`, where `diagnosis` is the
+   zod-validated output: unknown keys dropped, values never edited, and `completedAt` is
+   the Beirut wall-clock time the analysis was stored. On failure `ai_diagnosis` stays
+   `NULL`; a re-run overwrites it. It is an audit record.
    Never rewrite it when a user edits a derived value — the confirmed values go in their
    own columns on the request (`category_id`, `service_type`, `is_urgent`,
    `estimated_duration_minutes`, `description`) and in `request_items`. The original
@@ -524,6 +525,14 @@ Rules, all load-bearing:
 - **Photos:** at most 6 per analysis (the newest), sent inline as base64, never through
   the Files API. Read only from paths stored in `intake_photos`, resolved inside
   `uploads/intake/`. Photos are compressed on the phone; the server has no image library.
+- **Timeout and retries:** 45 s per analysis. One retry, only for network errors, 500 and
+  503, within the same 45 s; none for 429, 400, blocked or invalid output. A retry does
+  not count as an attempt.
+- **Limits:** 10 analysis starts per customer per hour (429 `ANALYSIS_RATE_LIMITED`); at
+  most 20 photos per session, checked in `recordCustomerTurn` under the session lock.
+- **Startup sweep:** once at startup, before accepting requests:
+  `UPDATE intake_sessions SET ai_status = 'failed' WHERE ai_status = 'pending'`, with no
+  time condition. It assumes one server process runs analyses.
 - **Areas:** `providers.area` and the search `area` parameter are validated against a
   fixed list of Lebanon's districts plus Beirut, kept in `src/constants/` (not added yet).
 - **Booking from a session:** allowed from any `ai_status`; the session needs at least one
@@ -537,7 +546,17 @@ Rules, all load-bearing:
 
   `description` is the customer's messages in order, joined by blank lines, cut to 2,000
   characters. A diagnosis that finishes after booking is stored on the session only: it
-  never seeds parts or changes the request.
+  never seeds parts or changes the request. Late means `ai_diagnosis.completedAt` is
+  later than `requests.created_at`; there is no column for it.
+
+  The `POST /requests` body is a union of two strict shapes: search (`description`,
+  `serviceType`, `estimatedDurationMinutes`) or session (`intakeSessionId`). Sending any
+  of those three with `intakeSessionId` matches neither shape → 400. Booking locks the
+  session row; the visit and the provider lock stay at quote acceptance. Visit length at
+  quote acceptance = `COALESCE(estimated_duration_minutes, 60)` (`DEFAULT_VISIT_MINUTES`);
+  `estimated_duration_minutes` stays `NULL` when not estimated. `deriveBookingFields` and
+  `buildDescription` are pure functions. The `REQUEST_CREATED` payload is
+  `{ source, intakeSessionId, aiStatusAtBooking, usedDiagnosis, partsSeeded }`.
 
 ### Provider matching is not an AI call
 
@@ -557,11 +576,11 @@ manually. Slots are suggestions only; booking is protected by the double-booking
 
 ### The call
 
-The API key comes from the typed config module like any other secret. Never log prompt or
-response bodies containing user photos, messages, or addresses (under review, AI plan
-item 5). Do not repeat a billed call for the same input: re-opening an intake session
-shows the stored result instead of calling the model again. Model output is untrusted
-input — it goes through the same validation as a request body.
+The API key comes from the typed config module like any other secret. Never log prompts,
+customer text or photos. Model output is logged only when an analysis fails, at `debug`
+level, cut to 2 KB. Do not repeat a billed call for the same input: re-opening an intake
+session shows the stored result instead of calling the model again. Model output is
+untrusted input — it goes through the same validation as a request body.
 
 The provider is the Google Gemini API (free tier). Free-tier data may be used by Google,
 so only test photos go through it — never real customer photos.
@@ -676,8 +695,10 @@ Every line written ships as-is.
 Seed scripts are the one exception, and only under `scripts/`, never reachable from a
 route. Demo data for the presentation belongs there.
 
-The request state machine is expected to have unit tests, and so is slot generation
-(`libraries/slot-rules.ts`). Other test suites are added on request, not by default.
+The request state machine is expected to have unit tests, and so are slot generation
+(`libraries/slot-rules.ts`) and the booking-from-session derivations
+(`deriveBookingFields`, `buildDescription`). Other test suites are added on request, not
+by default.
 
 ---
 
