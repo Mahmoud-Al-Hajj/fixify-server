@@ -55,7 +55,7 @@
 | API client | Axios, JWT attached per request                    |
 | Server     | Express.js, TypeScript, REST                       |
 | Auth       | Self-built — bcrypt hashing, JWT issuance          |
-| Database   | MySQL 8 (InnoDB), `mysql2` with parameterised SQL  |
+| Database   | MariaDB 10.4 (MySQL-compatible, InnoDB), `mysql2` with parameterised SQL |
 | AI         | Google Gemini API (free tier), single structured-JSON intake call |
 
 Stack was chosen deliberately to match what Mahmoud uses professionally. Do not propose swapping it.
@@ -94,9 +94,9 @@ That one response feeds **four** different places in the UI:
 
 ### Three non-negotiable rules for AI usage
 
-1. **AI proposes, humans confirm — always.** Every AI-suggested field is pre-filled but editable. No AI output writes directly to a database field without a human touching it. This is correct product design _and_ it protects the live demo when the model gets something wrong.
+1. **AI proposes, humans confirm — always.** The customer confirms or changes the trade and urgency; the server derives service type and duration from the diagnosis and builds the description from the customer's own messages (`docs/ai-plan.md` §7). No AI output writes directly to a database field without a human touching it. This is correct product design _and_ it protects the live demo when the model gets something wrong.
 2. **Never block on it.** The call runs async. If the API is slow or down, the request still submits; the brief reads "analysis unavailable."
-3. **Store the raw response.** `requests.ai_analysis JSON`. This gives auditability — you can show what the model said, its confidence, and what the human overrode.
+3. **Store the raw response.** `intake_sessions.ai_diagnosis` (JSON). This gives auditability — you can show what the model said, its confidence, and what the human overrode.
 
 ### Implementation notes
 
@@ -145,7 +145,7 @@ That one response feeds **four** different places in the UI:
 - `[E]` Structured request — category, description, address, urgency flag
 - `[P]` Upload up to 4 damage photos
 - `[P]` AI analysis (one call, see §3) returning: suspected problem, confidence, suggested category, service type, urgency, estimated duration, provider brief, customer message
-- `[P]` Every AI-suggested field editable before submit
+- `[P]` Customer confirms or changes the trade and urgency before submit; the server derives service type and duration (`docs/ai-plan.md` §7)
 - `[P]` Graceful degradation when AI is unavailable
 - `[P]` Raw AI response stored for audit
 
@@ -292,7 +292,7 @@ Two roles, one `users` table. A provider is a `users` row with a matching `provi
 ### 6.4 Data rules
 
 - `agreed_price` and `proposed_price` must be `DECIMAL(10,2)`. **Never a float.**
-- Store the raw AI response as JSON on the request (auditability).
+- Store the raw AI response as JSON in `intake_sessions.ai_diagnosis` (auditability).
 - Enable the `trg_reviews_completed` trigger. It is currently written in `db_schema.md` but marked `-- wasnt added`. It is the project's one piece of DB-enforced business logic and a core academic differentiator.
 - The DB does not enforce _which_ status transitions are legal. That belongs in a small state-machine function in the Express business-rule layer, not scattered if-checks.
 
@@ -332,7 +332,7 @@ These were considered and rejected. Do not reintroduce them without an explicit 
 **Customer creates request**
 
 1. Describes the problem, uploads 2 photos.
-2. **AI analyzes** (~3s): "Likely P-trap leak · Plumbing · Repair · ~90 min". Every field editable.
+2. **AI analyzes** (~3s): "Likely P-trap leak · Plumbing · Repair · ~90 min". The customer can change the trade and urgency.
 3. Browses plumbers filtered by category, sorted by _soonest available_. Cards show rating + "from $30" + "Available tomorrow 2 PM".
 4. Opens a profile: bio, stat strip, before/after work gallery, reviews.
 5. Taps a live 90-minute slot from the calendar.
