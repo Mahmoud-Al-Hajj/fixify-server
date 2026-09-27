@@ -105,7 +105,7 @@ them — never directly by session id.
 
 ```
 intake session ──AI diagnosis──> recommended providers ──customer picks provider──>
-AI-proposed slots (server-validated) ──customer picks slot──> request created (PENDING)
+suggested slots (deterministic) ──customer picks slot──> request created (PENDING)
 ```
 
 The chosen slot is stored in `requests.requested_start`. It is not reserved until a quote
@@ -197,7 +197,7 @@ If a task appears to require one of these, stop and say so.
 | Database   | MariaDB 10.4 (MySQL-compatible), InnoDB, accessed via `mysql2/promise`  |
 | Auth       | bcrypt password hashing, JWT sessions                                   |
 | Validation | Schema validation at the edge, before any handler logic                 |
-| AI         | Anthropic API — exactly two structured-JSON calls: intake diagnosis and slot generation |
+| AI         | Anthropic API — exactly one structured-JSON call: the intake diagnosis  |
 
 No ORM. Raw parameterised SQL in the model layer. This is deliberate — the schema is part
 of the project's contribution and is not to be hidden behind an abstraction.
@@ -222,7 +222,7 @@ Controllers       parse the validated request, call one service, map the
  │
  ▼
 Services          business rules, the request state machine, provider
-                  matching, slot validation, authorisation decisions,
+                  matching, slot suggestions, authorisation decisions,
                   transaction boundaries. Knows nothing about HTTP.
  │
  ▼
@@ -252,7 +252,7 @@ running, the layering is wrong.
 | "Accepting a quote creates the first visit"                                | Service (transaction)   |
 | "Creating a request from an intake seeds its parts list"                   | Service (transaction)   |
 | Choosing which providers to recommend for a diagnosis                      | Service + Model (SQL)   |
-| Checking an AI-proposed slot against working hours and existing visits    | Service                 |
+| Suggesting slots from working hours minus open visits (no AI)             | Service (`slot-rules`)  |
 | Calling the Anthropic API and parsing/validating its response              | Dedicated AI module     |
 | `SELECT ... WHERE id = ?`                                                  | Model                   |
 | Unique constraint on `(request_id)` in reviews                             | Schema                  |
@@ -319,7 +319,7 @@ Stopping is correct behaviour, not failure. Stop when:
 - Existing code contradicts these rules and it is unclear which wins.
 - A fix would require touching a layer outside the stated scope.
 - A new status value, service type, or enum member seems necessary.
-- A task would need a third AI call, or would make AI output final without a human
+- A task would need a second AI call, or would make AI output final without a human
   confirming it.
 - A task would expose one party's contact details to the other in a way not described
   here (for example, the customer's phone number to the provider).
@@ -366,6 +366,10 @@ options laid out.
   `completed_at`, `paid_at`, `visits.actual_start`) use `CURRENT_TIMESTAMP(3)` in
   MariaDB's `SYSTEM` zone, which must be Beirut. The server checks this at startup and
   refuses to start otherwise.
+- **API times are Beirut wall-clock with no offset** (e.g. `2026-09-29T08:00:00.000`).
+  Clients must treat them as `Asia/Beirut` explicitly and never parse them with
+  `new Date(string)`, which uses the device's zone and is wrong on a UTC emulator or a
+  phone abroad. This includes the mobile "Add to calendar".
 - DST is accepted as-is for the MVP: on the autumn change the 23:00 hour happens twice, and
   on the spring change the 00:00 hour does not exist. Wall-clock arithmetic stays
   self-consistent; a job spanning midnight on those nights is an hour off in real time.
@@ -422,8 +426,8 @@ Two layers, both required:
    `ER_DUP_ENTRY` on that key and maps it to a `ConflictError` telling the customer the
    slot was taken.
 
-Validating AI-proposed slots (see "AI") improves what the customer is shown; it does not
-replace either layer.
+Suggested slots (see "Slots are deterministic") are only suggestions; they do not replace
+either layer.
 
 ---
 
@@ -459,10 +463,11 @@ a migration that has already been applied — add a new one.
 
 ## AI
 
-The AI module makes **exactly two kinds of call**. Do not add a third, and do not split
-either one into several.
+The AI module makes **exactly one kind of call: the intake diagnosis**. Do not add
+another, and do not split it into several. Provider matching and appointment slots are
+deterministic code, not AI.
 
-### 1. Intake diagnosis
+### Intake diagnosis
 
 One call per intake analysis, over the customer's messages and photos, returning one
 structured JSON object: likely fault and confidence, category, service type, estimated
@@ -499,27 +504,21 @@ offer the diagnosed category in the customer's area and have `is_accepting = 1`,
 by rating and by earliest slot long enough for the estimated duration. Do not send the
 provider list to the model or ask it to rank or choose providers.
 
-### 2. Slot generation
+### Slots are deterministic
 
-When the customer opens booking for a chosen provider, one call proposes a small set of
-appointment slots from that provider's free windows (`provider_availability` minus active
-`visits`) over a forward period, sized to the estimated duration. Providers never list
-slots manually.
+`GET /providers/:id/slots?durationMinutes=` suggests appointment starts computed in
+`libraries/slot-rules.ts` (`proposeSlots`), with no AI: the provider's weekly hours minus
+open visits, on a 30-minute grid, at least 2 hours after `beirutNow()`, over 7 days, at
+most 3 per day and 10 in total, earliest first. Provider matching's `earliestSlot` is the
+first of these, so search and the slot list always agree. Providers never list slots
+manually. Slots are suggestions only; booking is protected by the double-booking rules.
 
-1. **The server computes the free windows**; the model only chooses among them.
-2. **Every proposed slot is validated in the service layer** before it is returned: inside
-   the provider's working hours for that weekday, not overlapping an active visit, correct
-   length, in the future. Invalid slots are dropped, never "fixed up".
-3. **If the call fails, or no valid slots remain, fall back** to returning the computed
-   free windows directly. Booking never depends on the model being available.
-4. The visits unique key remains the final guarantee against double-booking.
-
-### Both calls
+### The call
 
 The API key comes from the typed config module like any other secret. Never log prompt or
 response bodies containing user photos, messages, or addresses. Do not repeat a billed
-call for the same input: re-opening an intake session or a booking shows the stored
-result instead of calling the model again. Model output is untrusted input — it goes
+call for the same input: re-opening an intake session shows the stored result instead of
+calling the model again. Model output is untrusted input — it goes
 through the same validation as a request body.
 
 ---
@@ -572,7 +571,7 @@ For both:
   loudly at startup if a required variable is missing. No `process.env` access scattered
   through the codebase, no fallback defaults for secrets.
 - `helmet`, `cors` with an explicit origin allowlist, and rate limiting on auth endpoints
-  and on the endpoints that trigger AI calls.
+  and on the endpoints that trigger the AI call.
 - Login failures return the same generic message and comparable timing whether the email
   exists or not. Do not leak account existence.
 - Password reset tokens are stored hashed, single-use, and time-limited.
@@ -621,9 +620,8 @@ Every line written ships as-is.
 Seed scripts are the one exception, and only under `scripts/`, never reachable from a
 route. Demo data for the presentation belongs there.
 
-The request state machine is expected to have unit tests, and so is slot validation (it is
-what stands between model output and the customer). Other test suites are added on
-request, not by default.
+The request state machine is expected to have unit tests, and so is slot generation
+(`libraries/slot-rules.ts`). Other test suites are added on request, not by default.
 
 ---
 
@@ -638,9 +636,8 @@ in Phase 1 — do not silently fix it as a side effect of another task:
 - A create-request flow that creates the request first and runs the AI afterwards (the
   diagnosis now happens on the intake session, before the request exists).
 - Customer-uploaded photos stored in `request_photos` (they belong in `intake_photos`).
-- A single "one AI call" assumption, or a provider-ranking step that calls the model.
-- Slot lists built without server-side validation, or code that treats a proposed slot as
-  reserved.
+- A provider-ranking or slot step that calls the model (both are deterministic code).
+- Code that treats a suggested slot as reserved (only an accepted quote's visit is).
 - Constants missing values the CHECK constraints now require (`intake_messages.sender`,
   `request_items.source`, `intake_sessions.ai_status`).
 
