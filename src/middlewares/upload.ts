@@ -25,7 +25,7 @@ export function uploadPhotos(
 ): void {
   parse(req, res, (err: unknown) => {
     if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
-      next(Object.assign(err, { status: 413 }));
+      next(Object.assign(err, { status: 413, type: "entity.too.large" }));
       return;
     }
     if (err) {

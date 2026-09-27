@@ -33,9 +33,13 @@ export function errorHandler(
     return;
   }
 
-  // express.json() rejects a malformed or oversized body with a 4xx status.
+  // express.json() rejects a malformed or oversized body with a 4xx status
+  // and a string `type` (e.g. "entity.parse.failed"); other libraries' 4xx
+  // errors carry no `type` and fall through to the 500 path.
   if (
     err instanceof Error &&
+    "type" in err &&
+    typeof err.type === "string" &&
     "status" in err &&
     typeof err.status === "number" &&
     err.status >= 400 &&
