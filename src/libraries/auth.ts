@@ -5,8 +5,7 @@ import {
   findUserCredentialsByEmail,
   findPublicUserById,
   setPasswordResetToken,
-  findUserIdByResetTokenHash,
-  updatePasswordAndClearResetToken,
+  resetPasswordWithToken,
   type PublicUser,
 } from "../models-db/users";
 import {
@@ -131,11 +130,8 @@ export async function resetPassword(
   newPassword: string
 ): Promise<void> {
   const tokenHash = createHash("sha256").update(rawToken).digest("hex");
-  const userId = await findUserIdByResetTokenHash(tokenHash);
-  if (!userId) {
+  const passwordHash = await hashPassword(newPassword);
+  if (!(await resetPasswordWithToken(tokenHash, passwordHash))) {
     throw new UnauthorizedError("Invalid or expired reset token");
   }
-
-  const passwordHash = await hashPassword(newPassword);
-  await updatePasswordAndClearResetToken(userId, passwordHash);
 }

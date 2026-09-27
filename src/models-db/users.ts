@@ -1,4 +1,4 @@
-import type { RowDataPacket } from "mysql2/promise";
+import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import type { PoolConnection } from "mysql2/promise";
 import { pool } from "./pool";
 
@@ -135,20 +135,20 @@ export async function setPasswordResetToken(
   );
 }
 
-interface IdRow extends RowDataPacket {
-  id: string;
-}
-
-export async function findUserIdByResetTokenHash(
-  tokenHash: string
-): Promise<string | null> {
-  const [rows] = await pool.query<IdRow[]>(
-    `SELECT id FROM users
+// Sets the new password only if the token is still stored and unexpired, and
+// clears it in the same statement, so a token works once even under
+// concurrent use. Returns false when no row matched.
+export async function resetPasswordWithToken(
+  tokenHash: string,
+  passwordHash: string
+): Promise<boolean> {
+  const [result] = await pool.query<ResultSetHeader>(
+    `UPDATE users
+     SET password_hash = ?, reset_token_hash = NULL, reset_expires_at = NULL
      WHERE reset_token_hash = ? AND reset_expires_at > UTC_TIMESTAMP(3)`,
-    [tokenHash]
+    [passwordHash, tokenHash]
   );
-  const row = rows[0];
-  return row ? row.id : null;
+  return result.affectedRows === 1;
 }
 
 export async function updatePasswordAndClearResetToken(
