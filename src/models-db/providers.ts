@@ -221,3 +221,52 @@ export async function providerAcceptsCategory(
   );
   return rows.length > 0;
 }
+
+// One weekly working window; times are "HH:MM".
+export interface WeeklyHours {
+  weekday: number;
+  startTime: string;
+  endTime: string;
+}
+
+interface AvailabilityRow extends RowDataPacket {
+  provider_id: string;
+  weekday: number;
+  start_time: string;
+  end_time: string;
+}
+
+// Served by the primary key (provider_id, weekday, start_time).
+export async function listAvailability(
+  providerIds: readonly string[]
+): Promise<Array<WeeklyHours & { providerId: string }>> {
+  if (providerIds.length === 0) return [];
+  const [rows] = await pool.query<AvailabilityRow[]>(
+    `SELECT provider_id, weekday, start_time, end_time
+     FROM provider_availability WHERE provider_id IN (?)
+     ORDER BY provider_id, weekday, start_time`,
+    [providerIds]
+  );
+  return rows.map((row) => ({
+    providerId: row.provider_id,
+    weekday: row.weekday,
+    startTime: row.start_time.slice(0, 5),
+    endTime: row.end_time.slice(0, 5),
+  }));
+}
+
+export async function replaceAvailability(
+  conn: PoolConnection,
+  providerId: string,
+  hours: readonly WeeklyHours[]
+): Promise<void> {
+  await conn.query(`DELETE FROM provider_availability WHERE provider_id = ?`, [
+    providerId,
+  ]);
+  if (hours.length === 0) return;
+  await conn.query(
+    `INSERT INTO provider_availability (provider_id, weekday, start_time, end_time)
+     VALUES ?`,
+    [hours.map((h) => [providerId, h.weekday, h.startTime, h.endTime])]
+  );
+}

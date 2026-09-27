@@ -37,6 +37,27 @@ export type ReplaceOwnCategoriesBody = z.infer<
   typeof replaceOwnCategoriesSchema
 >;
 
+const HOUR_MINUTE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+export const replaceOwnAvailabilitySchema = z.object({
+  availability: z
+    .array(
+      z
+        .object({
+          weekday: z.number().int().min(0).max(6),
+          startTime: z.string().regex(HOUR_MINUTE, "Expected HH:MM"),
+          endTime: z.string().regex(HOUR_MINUTE, "Expected HH:MM"),
+        })
+        .refine((h) => h.endTime > h.startTime, {
+          message: "endTime must be after startTime",
+        })
+    )
+    .max(21),
+});
+export type ReplaceOwnAvailabilityBody = z.infer<
+  typeof replaceOwnAvailabilitySchema
+>;
+
 export const providerIdParamsSchema = z.object({
   id: z.uuid(),
 });

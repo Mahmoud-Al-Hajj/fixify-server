@@ -6,6 +6,9 @@ import {
   updateProviderProfile,
   lockProviderForUpdate,
   replaceProviderCategories,
+  listAvailability,
+  replaceAvailability,
+  type WeeklyHours,
   type ProviderSummary,
   type ProviderProfile,
   type ProviderProfileChanges,
@@ -48,6 +51,7 @@ export interface ProviderProfileDetails {
   categories: Category[];
   rating: RatingSummary;
   reviews: Review[];
+  availability: WeeklyHours[];
 }
 
 // The rating covers every review; the list holds only the most recent ones.
@@ -64,11 +68,17 @@ export async function getProviderProfile(
     providerId,
     PROFILE_REVIEW_LIMIT
   );
+  const availability = await listAvailability([providerId]);
   return {
     profile,
     categories,
     rating: ratings.get(providerId) ?? NO_RATINGS,
     reviews,
+    availability: availability.map(({ weekday, startTime, endTime }) => ({
+      weekday,
+      startTime,
+      endTime,
+    })),
   };
 }
 
@@ -108,4 +118,32 @@ export async function replaceOwnCategories(
   });
 
   return listCategoriesForProvider(userId);
+}
+
+// Replaces the provider's whole weekly pattern. Windows on the same weekday
+// may not overlap; each window's end > start is checked at the edge.
+export async function replaceOwnAvailability(
+  userId: string,
+  hours: readonly WeeklyHours[]
+): Promise<WeeklyHours[]> {
+  await assertIsProvider(userId, "set working hours");
+  const sorted = [...hours].sort(
+    (a, b) => a.weekday - b.weekday || a.startTime.localeCompare(b.startTime)
+  );
+  sorted.forEach((current, i) => {
+    const previous = sorted[i - 1];
+    if (
+      previous?.weekday === current.weekday &&
+      current.startTime < previous.endTime
+    ) {
+      throw new ValidationError(
+        `Working hours overlap on weekday ${current.weekday}`
+      );
+    }
+  });
+  await withTransaction(async (conn) => {
+    await lockProviderForUpdate(conn, userId);
+    await replaceAvailability(conn, userId, sorted);
+  });
+  return sorted;
 }

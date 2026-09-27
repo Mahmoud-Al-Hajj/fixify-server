@@ -8,6 +8,7 @@ import type {
   ProviderIdParams,
   UpdateOwnProviderBody,
   ReplaceOwnCategoriesBody,
+  ReplaceOwnAvailabilityBody,
 } from "../routes/providers.schema";
 
 export async function listProvidersHandler(
@@ -44,12 +45,14 @@ function toProviderResponse({
   categories,
   rating,
   reviews,
+  availability,
 }: providersService.ProviderProfileDetails) {
   return {
     ...profile,
     categories,
     rating,
     reviews: reviews.map(toPublicReview),
+    availability,
   };
 }
 
@@ -88,4 +91,18 @@ export async function replaceOwnCategoriesHandler(
     categoryIds
   );
   res.status(200).json({ categories });
+}
+
+export async function replaceOwnAvailabilityHandler(
+  req: Request,
+  res: Response
+): Promise<void> {
+  const user = requireUser(req);
+  const { availability } = req.body as ReplaceOwnAvailabilityBody;
+  res.status(200).json({
+    availability: await providersService.replaceOwnAvailability(
+      user.id,
+      availability
+    ),
+  });
 }

@@ -6,12 +6,14 @@ import {
   providerIdParamsSchema,
   updateOwnProviderSchema,
   replaceOwnCategoriesSchema,
+  replaceOwnAvailabilitySchema,
 } from "./providers.schema";
 import {
   listProvidersHandler,
   getProviderHandler,
   updateOwnProviderHandler,
   replaceOwnCategoriesHandler,
+  replaceOwnAvailabilityHandler,
 } from "../controllers/providers";
 
 export const providersRouter = Router();
@@ -33,6 +35,11 @@ providersRouter.put(
   "/me/categories",
   validateBody(replaceOwnCategoriesSchema),
   replaceOwnCategoriesHandler
+);
+providersRouter.put(
+  "/me/availability",
+  validateBody(replaceOwnAvailabilitySchema),
+  replaceOwnAvailabilityHandler
 );
 providersRouter.get(
   "/:id",
