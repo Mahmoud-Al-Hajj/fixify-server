@@ -370,7 +370,8 @@ options laid out.
   on the spring change the 00:00 hour does not exist. Wall-clock arithmetic stays
   self-consistent; a job spanning midnight on those nights is an hour off in real time.
 
-MariaDB specifics:
+### MariaDB specifics
+
 - `JSON` is an alias for `LONGTEXT` with a `json_valid` CHECK, so JSON columns
   come back from mysql2 as strings. Models parse them in one place when mapping
   the row; nothing above the model layer ever sees raw JSON text.
