@@ -1,4 +1,5 @@
 export const AI_STATUS = {
+  NONE: "none",
   PENDING: "pending",
   DONE: "done",
   FAILED: "failed",

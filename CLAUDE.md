@@ -477,11 +477,17 @@ provider matching, the defaults on the new request, and the seeded `request_item
 
 Rules, all load-bearing:
 
-1. **Never block on it.** Store each customer turn first, then analyse. Set
-   `intake_sessions.ai_status` to `pending`, run the call, then set `done` or `failed`. A
-   failed or slow analysis must not stop the customer: they choose a category manually
-   and continue through ordinary search. A request with no intake session, or one whose
-   session has `ai_status = 'failed'`, is a valid request.
+1. **Never block on it.** Store each customer turn first, then analyse. A session starts
+   at `none`; set `intake_sessions.ai_status` to `pending`, run the call, then set `done`
+   or `failed`. A failed or slow analysis must not stop the customer: they choose a
+   category manually and continue through ordinary search. A request with no intake
+   session, or one whose session has `ai_status = 'failed'`, is a valid request.
+
+   `intake_sessions.ai_status` values:
+   - `none` — not analysed yet (the default). A new session collecting turns.
+   - `pending` — an analysis is running. Only this, never "not started".
+   - `done` — `ai_diagnosis` holds a validated diagnosis.
+   - `failed` — the analysis failed; the customer continues by manual category search.
 2. **AI proposes, the human confirms.** The customer can edit every derived value
    (category, service type, duration, description) before booking; the provider can edit
    every suggested part. Never write an AI output straight to a field as final truth.

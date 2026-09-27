@@ -79,7 +79,7 @@ CREATE TABLE provider_availability (
 CREATE TABLE intake_sessions (
   id            CHAR(36) CHARACTER SET ascii NOT NULL,
   customer_id   CHAR(36) CHARACTER SET ascii NOT NULL,
-  ai_status     VARCHAR(10) NOT NULL DEFAULT 'pending',
+  ai_status     VARCHAR(10) NOT NULL DEFAULT 'none',
   ai_diagnosis  JSON,
   created_at    DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   updated_at    DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
@@ -312,7 +312,8 @@ ALTER TABLE request_photos
 
 -- NEW
 ALTER TABLE intake_sessions
-  ADD CONSTRAINT chk_is_ai_status CHECK (ai_status IN ('pending','done','failed'));
+  ADD CONSTRAINT chk_is_ai_status
+    CHECK (ai_status IN ('none','pending','done','failed'));
 
 -- NEW
 ALTER TABLE intake_messages
