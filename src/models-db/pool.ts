@@ -1,5 +1,6 @@
-import mysql, { type PoolConnection } from "mysql2/promise";
+import mysql, { type PoolConnection, type RowDataPacket } from "mysql2/promise";
 import { env } from "../config/env";
+import { beirutNow, wallClockToDate } from "./format-datetime";
 
 // Every DATETIME column in this schema is Beirut wall-clock time stored
 // with no offset — written and read as plain digits, never as a UTC
@@ -30,6 +31,22 @@ export async function assertDbReachable(): Promise<void> {
     await conn.ping();
   } finally {
     conn.release();
+  }
+}
+
+// Columns the database stamps (CURRENT_TIMESTAMP) must be Beirut wall-clock
+// like every other DATETIME, so MariaDB's clock zone has to be Beirut.
+export async function assertDbClockIsBeirut(): Promise<void> {
+  const [rows] = await pool.query<Array<RowDataPacket & { now: string }>>(
+    "SELECT NOW(3) AS now"
+  );
+  const dbNow = wallClockToDate(rows[0]?.now ?? "");
+  const driftMinutes =
+    Math.abs(dbNow.getTime() - beirutNow().getTime()) / 60_000;
+  if (!(driftMinutes <= 2)) {
+    throw new Error(
+      `Database clock is ${Math.round(driftMinutes)} min away from Beirut time; set MariaDB's time zone to Asia/Beirut`
+    );
   }
 }
 
