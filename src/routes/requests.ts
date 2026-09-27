@@ -1,10 +1,6 @@
 import { Router } from "express";
 import { authenticate } from "../middlewares/authenticate";
-import {
-  validateBody,
-  validateQuery,
-  validateParams,
-} from "../middlewares/validate";
+import { validateBody, validate } from "../middlewares/validate";
 import {
   createRequestSchema,
   createReviewSchema,
@@ -38,58 +34,58 @@ requestsRouter.post(
 );
 requestsRouter.get(
   "/",
-  validateQuery(listRequestsQuerySchema),
+  validate("query", listRequestsQuerySchema),
   listRequestsHandler
 );
 requestsRouter.get(
   "/:id",
-  validateParams(requestIdParamsSchema),
+  validate("params", requestIdParamsSchema),
   getRequestHandler
 );
 requestsRouter.post(
   "/:id/reject",
-  validateParams(requestIdParamsSchema),
+  validate("params", requestIdParamsSchema),
   rejectRequestHandler
 );
 requestsRouter.post(
   "/:id/cancel",
-  validateParams(requestIdParamsSchema),
+  validate("params", requestIdParamsSchema),
   cancelRequestHandler
 );
 requestsRouter.post(
   "/:id/start",
-  validateParams(requestIdParamsSchema),
+  validate("params", requestIdParamsSchema),
   startRequestHandler
 );
 requestsRouter.post(
   "/:id/complete",
-  validateParams(requestIdParamsSchema),
+  validate("params", requestIdParamsSchema),
   completeRequestHandler
 );
 requestsRouter.post(
   "/:id/mark-paid",
-  validateParams(requestIdParamsSchema),
+  validate("params", requestIdParamsSchema),
   markRequestPaidHandler
 );
 requestsRouter.post(
   "/:id/quote",
-  validateParams(requestIdParamsSchema),
+  validate("params", requestIdParamsSchema),
   validateBody(proposeQuoteSchema),
   proposeQuoteHandler
 );
 requestsRouter.post(
   "/:id/quote/decline",
-  validateParams(requestIdParamsSchema),
+  validate("params", requestIdParamsSchema),
   declineQuoteHandler
 );
 requestsRouter.post(
   "/:id/quote/accept",
-  validateParams(requestIdParamsSchema),
+  validate("params", requestIdParamsSchema),
   acceptQuoteHandler
 );
 requestsRouter.post(
   "/:id/review",
-  validateParams(requestIdParamsSchema),
+  validate("params", requestIdParamsSchema),
   validateBody(createReviewSchema),
   createReviewHandler
 );

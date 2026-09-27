@@ -1,10 +1,6 @@
 import { Router } from "express";
 import { authenticate } from "../middlewares/authenticate";
-import {
-  validateBody,
-  validateQuery,
-  validateParams,
-} from "../middlewares/validate";
+import { validateBody, validate } from "../middlewares/validate";
 import {
   listProvidersQuerySchema,
   providerIdParamsSchema,
@@ -24,7 +20,7 @@ providersRouter.use(authenticate);
 
 providersRouter.get(
   "/",
-  validateQuery(listProvidersQuerySchema),
+  validate("query", listProvidersQuerySchema),
   listProvidersHandler
 );
 // /me routes are registered before /:id so "me" is never read as a provider id.
@@ -40,6 +36,6 @@ providersRouter.put(
 );
 providersRouter.get(
   "/:id",
-  validateParams(providerIdParamsSchema),
+  validate("params", providerIdParamsSchema),
   getProviderHandler
 );

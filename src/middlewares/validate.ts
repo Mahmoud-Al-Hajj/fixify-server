@@ -21,49 +21,30 @@ export function validateBody<T>(schema: ZodType<T>) {
 }
 
 export type QueryLocals<T> = { query: T };
-
-// Express 5 exposes req.query as a getter with no setter, re-parsed on every
-// read, so the parsed result lives on res.locals instead.
-export function validateQuery<T>(
-  schema: ZodType<T>
-): RequestHandler<
-  Request["params"],
-  unknown,
-  unknown,
-  Request["query"],
-  QueryLocals<T>
-> {
-  return (req, res, next) => {
-    const result = schema.safeParse(req.query);
-    if (!result.success) {
-      next(new ValidationError(formatIssues(result.error)));
-      return;
-    }
-    res.locals.query = result.data;
-    next();
-  };
-}
-
 export type ParamsLocals<T> = { params: T };
 
-// req.params is typed string | string[] per key, so the parsed result goes on
-// res.locals, where the handler reads it with the schema's type and no cast.
-export function validateParams<T>(
+// Express 5 exposes req.query as a getter with no setter, re-parsed on every
+// read, and types req.params per key as string | string[]. So the parsed
+// result goes on res.locals, where the handler reads it with the schema's
+// type and no cast.
+export function validate<K extends "query" | "params", T>(
+  part: K,
   schema: ZodType<T>
 ): RequestHandler<
   Request["params"],
   unknown,
   unknown,
   Request["query"],
-  ParamsLocals<T>
+  Record<K, T>
 > {
   return (req, res, next) => {
-    const result = schema.safeParse(req.params);
+    const result = schema.safeParse(req[part]);
     if (!result.success) {
       next(new ValidationError(formatIssues(result.error)));
       return;
     }
-    res.locals.params = result.data;
+    const locals: Record<K, T> = res.locals;
+    locals[part] = result.data;
     next();
   };
 }
