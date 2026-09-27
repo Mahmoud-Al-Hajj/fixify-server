@@ -254,9 +254,9 @@ export async function saveRequestItems(
       actorUserId,
       eventType: JOB_EVENT_TYPE.REQUEST_ITEMS_UPDATED,
       payload: {
-        added: String(added.length),
-        updated: String(updated.length),
-        removed: String(removed.length),
+        added: added.length,
+        updated: updated.length,
+        removed: removed.length,
       },
     });
   });
