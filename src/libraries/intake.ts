@@ -16,9 +16,14 @@ import { logger } from "../config/logger";
 const UPLOADS_DIR = path.resolve("uploads");
 const INTAKE_PHOTO_DIR = "intake";
 
+export interface Photo {
+  buffer: Buffer;
+  extension: "jpg" | "png";
+}
+
 export interface CustomerTurn {
   body: string | null;
-  photos: ReadonlyArray<{ buffer: Buffer; extension: "jpg" | "png" }>;
+  photos: readonly Photo[];
 }
 
 // Writes each photo under a server-generated name and returns the paths

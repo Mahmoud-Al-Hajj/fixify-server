@@ -10,9 +10,9 @@ export async function createIntakeSessionHandler(
 ): Promise<void> {
   const customer = requireUser(req);
   const { body } = req.body as CustomerTurnBody;
-  const session = await intakeService.createIntakeSession(customer.id, {
-    body: body ?? null,
-    photos: res.locals.photos,
-  });
-  res.status(201).json({ session });
+  const { id, aiStatus, createdAt } = await intakeService.createIntakeSession(
+    customer.id,
+    { body: body ?? null, photos: res.locals.photos }
+  );
+  res.status(201).json({ session: { id, aiStatus, createdAt } });
 }
