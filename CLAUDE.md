@@ -197,7 +197,7 @@ If a task appears to require one of these, stop and say so.
 | Database   | MariaDB 10.4 (MySQL-compatible), InnoDB, accessed via `mysql2/promise`  |
 | Auth       | bcrypt password hashing, JWT sessions                                   |
 | Validation | Schema validation at the edge, before any handler logic                 |
-| AI         | Anthropic API — exactly one structured-JSON call: the intake diagnosis  |
+| AI         | Google Gemini API (free tier) — exactly one structured-JSON call: the intake diagnosis |
 
 No ORM. Raw parameterised SQL in the model layer. This is deliberate — the schema is part
 of the project's contribution and is not to be hidden behind an abstraction.
@@ -253,7 +253,7 @@ running, the layering is wrong.
 | "Creating a request from an intake seeds its parts list"                   | Service (transaction)   |
 | Choosing which providers to recommend for a diagnosis                      | Service + Model (SQL)   |
 | Suggesting slots from working hours minus open visits (no AI)             | Service (`slot-rules`)  |
-| Calling the Anthropic API and parsing/validating its response              | Dedicated AI module     |
+| Calling the Gemini API and parsing/validating its response                 | Dedicated AI module     |
 | `SELECT ... WHERE id = ?`                                                  | Model                   |
 | Unique constraint on `(request_id)` in reviews                             | Schema                  |
 | Password hashing, JWT signing and verification                             | Dedicated auth module   |
@@ -526,6 +526,10 @@ response bodies containing user photos, messages, or addresses. Do not repeat a 
 call for the same input: re-opening an intake session shows the stored result instead of
 calling the model again. Model output is untrusted input — it goes
 through the same validation as a request body.
+
+The provider is the Google Gemini API (free tier); the model ID and SDK are not decided.
+Free-tier data may be used by Google, so only test photos go through it — never real
+customer photos.
 
 ---
 

@@ -56,9 +56,11 @@
 | Server     | Express.js, TypeScript, REST                       |
 | Auth       | Self-built — bcrypt hashing, JWT issuance          |
 | Database   | MySQL 8 (InnoDB), `mysql2` with parameterised SQL  |
-| AI         | Anthropic API (single structured-JSON intake call) |
+| AI         | Google Gemini API (free tier), single structured-JSON intake call |
 
 Stack was chosen deliberately to match what Mahmoud uses professionally. Do not propose swapping it.
+
+Free-tier Gemini data may be used by Google, so only test photos go through it — never real customer photos. The model ID and SDK are not decided yet.
 
 ---
 
@@ -66,7 +68,7 @@ Stack was chosen deliberately to match what Mahmoud uses professionally. Do not 
 
 **This is the single most important design decision in the project. Read it before touching any AI feature.**
 
-When a customer submits a request (description + photos), the server makes **one** call to Claude and receives **one** structured JSON blob:
+When a customer submits a request (description + photos), the server makes **one** call to the Gemini API and receives **one** structured JSON blob:
 
 ```json
 {
