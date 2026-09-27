@@ -755,6 +755,13 @@ in Phase 1 — do not silently fix it as a side effect of another task:
 
 ---
 
+## Git
+
+- Never create, switch, merge or delete git branches unless the user explicitly asks in
+  that message. Work on the current branch and report which one it is.
+
+---
+
 ## Communication
 
 - Short and direct. No preamble, no restating the request.
