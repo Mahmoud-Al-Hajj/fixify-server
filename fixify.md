@@ -23,6 +23,7 @@
 
 - `[E]` — **Existing**: already decided/specified in the original proposal or schema.
 - `[P]` — **Proposed**: added during scope expansion. Not yet built or reflected in the original documents.
+- No marker — **Built**.
 
 ---
 
@@ -104,7 +105,7 @@ The AI makes exactly **one** call: the **intake diagnosis**. The customer descri
 - `[E]` View own received reviews
 - `[P]` Service area — city/district dropdown (**no GPS, no lat/lng**)
 - `[P]` Base rate per category — displayed as "from $30"
-- `[P]` Weekly working-hours pattern (per-weekday start/end times)
+- Weekly working-hours pattern (per-weekday start/end times)
 - `[P]` Reputation stat strip — median response time, completion rate, jobs completed, repeat customers
 - `[P]` Work gallery — before/after photo pairs from completed jobs
 - `[P]` Earnings dashboard — this month / last month / total, bar chart by month and category
@@ -116,13 +117,13 @@ The AI makes exactly **one** call: the **intake diagnosis**. The customer descri
 - `[E]` View full provider profile
 - `[P]` Sort by price (lowest base rate)
 - `[P]` Sort by **soonest available** — cards read "Available tomorrow 2 PM"
-- `[P]` Filter by service area
+- Filter by service area
 - `[P]` Filter by service type (repair / installation / maintenance / inspection)
 
 ### 4.4 Request Creation & Smart Intake
 
 - `[E]` Structured request — category, description, address, urgency flag
-- `[P]` Up to 5 photos per intake message, each at most 5 MB, JPEG or PNG only (checked from the file's bytes, not its name or declared type); a message needs text, a photo, or both
+- Up to 5 photos per intake message, each at most 5 MB, JPEG or PNG only (checked from the file's bytes, not its name or declared type); a message needs text, a photo, or both
 - `[P]` AI diagnosis (one call, see §3)
 - `[P]` Customer confirms or changes the trade and urgency before submit; the server derives service type and duration (`docs/ai-plan.md` §7)
 - `[P]` Graceful degradation when AI is unavailable
@@ -132,22 +133,22 @@ The AI makes exactly **one** call: the **intake diagnosis**. The customer descri
 
 - `[E]` ~~Preferred date~~ — superseded
 - `[E]` ~~Preferred slot (morning/afternoon/evening/anytime)~~ — superseded
-- `[P]` Live bookable slots, generated from the provider's working-hours pattern **minus** already-booked visits
+- Live bookable slots, generated from the provider's working-hours pattern **minus** already-booked visits
 - `[P]` Slot length from the AI's duration estimate (rounded to 15 min); slot starts on a 30-min grid
 - `[P]` Date strip + time-chip grid picker; past and booked slots greyed out
-- `[P]` Conflict prevention — a booked slot immediately disappears for everyone
+- Conflict prevention — a booked slot immediately disappears for everyone
 
 > **Decision:** availability matching is **one-sided**. The provider declares hours; the customer picks from what's free. Two-sided matching (customer also declares availability, system intersects) was considered and rejected — roughly double the work, near-identical UI, and it introduces a "no overlap found" dead-end state that has to be designed around.
 
 ### 4.6 Quoting & Pricing
 
-- `[P]` Provider sets the final price, optionally adds a note on what's included
+- Provider sets the final price; `[P]` optionally adds a note on what's included
 - `[P]` Customer receives a quote card — price, duration, slot
-- `[P]` Customer accepts or declines
-- `[P]` **Revised quote mid-job** when additional work is discovered (reason + photo required)
-- `[P]` Customer approves or declines the revision in-app
+- Customer accepts or declines
+- **Revised quote mid-job** when additional work is discovered (reason required; `[P]` photo required)
+- Customer approves or declines the revision in-app
 - `[P]` Price history preserved on the booking (original vs revised)
-- `[P]` Cash payment recorded via a "mark as paid" checkbox
+- Cash payment recorded via a "mark as paid" checkbox
 
 > **Decision:** price is a **record of an agreement**, not a transaction. No Stripe, no wallets, no escrow. Real payments add a compliance surface and roughly a month of work for zero presentation value.
 
@@ -159,15 +160,15 @@ The AI makes exactly **one** call: the **intake diagnosis**. The customer descri
 - `[E]` Provider rejects a pending request; the customer accepts a quote (pending → scheduled) — there is no provider "accept" action
 - `[E]` Cancel: customer only while pending; either side once scheduled or in progress
 - `[E]` Provider marks the job complete — provider-only, with no customer confirmation step
-- `[P]` Extended job status flow
-- `[P]` **Visits separated from jobs** — one job can have multiple visits
-- `[P]` Visit statuses: `scheduled → en_route → in_progress → done`, plus `cancelled`
+- Extended job status flow
+- **Visits separated from jobs** — `[P]` one job can have multiple visits
+- Visit statuses: `scheduled → en_route → in_progress → done`, plus `cancelled` (`en_route` not built yet)
 - `[P]` Reschedule a visit — either side proposes, the other confirms
 - `[P]` Extend a visit in progress when a job runs long
 - `[P]` Schedule a follow-up visit (parts unavailable, second day, revisit)
-- `[P]` **"On my way"** button → customer sees "Provider en route"
-- `[P]` Start job / complete job, with actual start and end times recorded
-- `[P]` Server-side validation of all status transitions (state machine)
+- `[P]` **"On my way"** button → customer sees "Provider en route" (not built yet)
+- Start job / complete job; start recorded on the visit (`actual_start`); finish is `requests.completed_at`
+- Server-side validation of all status transitions (state machine)
 
 **Job status flow:**
 
@@ -199,18 +200,18 @@ Quote state is not a job status. It lives in `requests.price_status`
 
 ### 4.8 Photos & Documentation
 
-- `[P]` Before photos uploaded by the customer at request time
-- `[P]` After photos uploaded by the provider on completion
+- `[P]` The customer's photos of the problem are intake photos, shown to the assigned provider on the issue card
+- `[P]` Before and after photos belong to the provider, uploaded on the job
 - `[P]` Before/after side-by-side view on the booking
 - `[P]` Photos feed the provider's public work gallery
 - `[P]` Photo attached to revised-quote requests as evidence
 
 ### 4.9 Job Progress Timeline
 
-- `[P]` Every meaningful action written as a job event
+- Every meaningful action written as a job event
 - `[P]` Vertical timeline with icons and timestamps on each booking
-- `[P]` Covers: submitted → AI analyzed → quoted → accepted → scheduled → en route → started → extra work approved → visit 2 → completed → paid → reviewed
-- `[P]` Doubles as an audit trail
+- Starts at request creation: `request_created` → `quote_proposed` → `quote_accepted` / `quote_declined` → `request_started` → `request_items_updated` → `request_completed` → `request_paid` → `review_created`, or ends at `request_rejected` / `request_cancelled`. The AI analysis happens earlier, on the intake session, and is not a job event
+- Doubles as an audit trail
 
 ### 4.10 Notifications
 
@@ -225,7 +226,7 @@ Quote state is not a job status. It lives in `requests.price_status`
 - `[E]` One review per completed job, enforced at database level (`uq_reviews_request` + trigger)
 - `[E]` Reviews shown on provider profiles
 - `[E]` Ratings feed search sorting
-- `[P]` Review unlocked only once the provider marks the job complete
+- Review unlocked only once the provider marks the job complete
 - `[P]` Review displayed inline on the job timeline
 
 ### 4.12 Job Summary / Receipt
@@ -267,12 +268,11 @@ Two roles, one `users` table. A provider is a `users` row with a matching `provi
 
 ---
 
-
-### 6.4 Data rules
+## 6. Data Rules
 
 - `price` and `revised_price` must be `DECIMAL(10,2)`. **Never a float.**
 - The AI diagnosis is stored as JSON in `intake_sessions.ai_diagnosis` (auditability; see `docs/ai-plan.md` §3.3).
-- The `trg_reviews_completed` trigger rejects a review unless its request is `completed`. It is the project's one piece of DB-enforced business logic and a core academic differentiator.
+- DB-enforced rules: a trigger (`trg_reviews_completed` rejects a review unless its request is `completed`), CHECK constraints and unique keys. They are a core academic differentiator.
 - The DB does not enforce _which_ status transitions are legal. That belongs in a small state-machine function in the Express business-rule layer, not scattered if-checks.
 
 ---
@@ -318,14 +318,14 @@ These were considered and rejected. Do not reintroduce them without an explicit 
 5. Taps a live 90-minute slot from the calendar.
 6. Submits.
 
-**Provider receives it** 7. Push: "New plumbing repair — kitchen sink leak". 8. Opens the **job brief**: photos, AI diagnosis, requested slot, tools to bring. 9. Taps Quote → sets the price at $45, adds a note → sends.
+**Provider receives it** 7. Push: "New plumbing repair — kitchen sink leak". 8. Opens the **issue card**: photos, AI diagnosis, requested slot, suggested parts list. 9. Taps Quote → sets the price at $45, adds a note → sends.
 
 **Customer decides** 10. Quote card: $45, 90 min, Tue 2 PM. 11. Accept → status `SCHEDULED`, visit created, timeline updates, both sides notified.
 
-**Day of** 12. Provider taps **On my way** → customer sees "Provider en route". 13. Provider taps **Start job** → `IN_PROGRESS`, timer running.
+**Day of** 12. Provider taps **On my way** (not built yet) → customer sees "Provider en route". 13. Provider taps **Start job** → `IN_PROGRESS`, timer running.
 
 **Mid-job — the branch that makes this feel like a real product**
-14a. Provider finds a corroded pipe → taps **Additional work** → revised quote $75 with reason + photo → customer approves in-app → timeline records both prices.
+14a. Provider finds a corroded pipe → taps **Additional work** → revised quote $75 with reason + photo → customer approves in-app → job events record both prices (`[P]` shown in the timeline view).
 14b. _Or_ the part isn't available → provider taps **Schedule follow-up** → visit #2 proposed for Thursday → customer confirms → job stays open, timeline shows Visit 1 done / Visit 2 scheduled.
 
 **Completion** 15. Provider uploads after-photos → taps **Complete** → status `COMPLETED` (provider-only; no customer confirmation step). 16. Marked paid in cash. 17. Customer reviews (unlocked only by completion). 18. **Job summary** screen: full timeline, both visits, price history, before/after. 19. If `service_type = 'maintenance'`: "Remind me in 6 months?"
