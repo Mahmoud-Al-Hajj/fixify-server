@@ -137,3 +137,19 @@ export async function listIntakeMessages(
       .map((photo) => ({ id: photo.id, url: photo.url })),
   }));
 }
+
+// A photo's storage path, only if it belongs to this session. Served by the
+// primary keys.
+export async function findIntakePhotoUrl(
+  photoId: number,
+  sessionId: string
+): Promise<string | null> {
+  const [rows] = await pool.query<IntakePhotoRow[]>(
+    `SELECT p.id, p.message_id, p.url
+     FROM intake_photos p
+     JOIN intake_messages m ON m.id = p.message_id
+     WHERE p.id = ? AND m.session_id = ?`,
+    [photoId, sessionId]
+  );
+  return rows[0]?.url ?? null;
+}

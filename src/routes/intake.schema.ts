@@ -10,3 +10,12 @@ export const sessionIdParamsSchema = z.object({
   id: z.uuid(),
 });
 export type SessionIdParams = z.infer<typeof sessionIdParamsSchema>;
+
+export const sessionPhotoParamsSchema = z.object({
+  id: z.uuid(),
+  photoId: z
+    .string()
+    .regex(/^\d+$/, "Expected a positive whole number")
+    .transform(Number),
+});
+export type SessionPhotoParams = z.infer<typeof sessionPhotoParamsSchema>;

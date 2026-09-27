@@ -9,6 +9,7 @@ import {
   insertIntakePhotos,
   findIntakeSession,
   listIntakeMessages,
+  findIntakePhotoUrl,
   type IntakeSession,
   type IntakeMessage,
 } from "../models-db/intake";
@@ -140,4 +141,33 @@ export async function addCustomerMessage(
     throw new Error("Intake message was created but could not be re-read");
   }
   return message;
+}
+
+export async function getOwnSession(
+  sessionId: string,
+  customerId: string
+): Promise<{ session: IntakeSession; messages: IntakeMessage[] }> {
+  const session = await loadOwnSession(sessionId, customerId);
+  return { session, messages: await listIntakeMessages(sessionId) };
+}
+
+// Readable by the session's customer, or by the provider assigned to the
+// request booked from it. Returns the file's absolute path.
+export async function getIntakePhotoPath(
+  sessionId: string,
+  photoId: number,
+  userId: string
+): Promise<string> {
+  const session = await findIntakeSession(sessionId);
+  if (!session) {
+    throw new NotFoundError("Intake session not found");
+  }
+  if (session.customerId !== userId && session.providerId !== userId) {
+    throw new ForbiddenError("You may not view this photo");
+  }
+  const url = await findIntakePhotoUrl(photoId, sessionId);
+  if (url === null) {
+    throw new NotFoundError("Photo not found");
+  }
+  return path.join(UPLOADS_DIR, url);
 }
