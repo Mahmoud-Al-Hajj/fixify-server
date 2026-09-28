@@ -355,6 +355,7 @@ Checked against the Gemini docs on 2026-09-27.
 - **Compare against `gemini-3.5-flash-lite`** on the same test photos (§14.7).
 - **No preview models.** They get renamed and retired.
 - **Paid-tier reference for the report:** about 8k input and 1k output tokens per diagnosis ≈ **$0.01** on 3.8 Flash ($0.75 / $3.75 per million, through 2026). Replaced by measured token counts from §14 run A.
+- Measured so far: about $0.003 on the text-only `no-trade` call. Photo cases cost more (image tokens), so run A's numbers replace both figures.
 
 ### 5.2 API: Interactions, always `store: false`
 
@@ -783,7 +784,7 @@ Run order: C → prompt tweaks and C′ → A → B → D.
 | B | `gemini-3.8-flash` | `thinking_level: low` + output cap from A | faster or cheaper without getting worse? (another day) |
 | D | the winner | `--repeat 2` | flakiness: a case that flips between runs is a prompt problem |
 
-- **Winner:** must meet the §14.6 bar. Prefer the model whose free quota covers a demo (Flash-Lite). If only 3.8 Flash passes, the demo runs on a paid key (about $0.003 per diagnosis, measured on the `no-trade` call).
+- **Winner:** must meet the §14.6 bar. Prefer the model whose free quota covers a demo (Flash-Lite). No paid key is available. If only 3.8 Flash passes, first try prompt changes on Flash-Lite (bump PROMPT_VERSION, rerun C). If Flash-Lite still misses the bar, 3.8 Flash becomes the default and the demo runs inside its free quota (20 requests/day): no replays on demo day, and the replay script's pause and --case flags are used to keep testing within quota.
 - **Thinking levels:** 3.8 Flash supports `low`, `medium` and `high` (default `medium`; `minimal` returns an error), so run B is `low`. 3.5 Flash-Lite supports `minimal` to `high`, default `minimal`.
 - **Output-token cap:** the output cap is set per model from that model's own runs: about twice the largest **output + thought** tokens seen (run C for Flash-Lite, run A for 3.8 Flash). `max_output_tokens` includes thinking tokens, while `usage.total_output_tokens` reports output without them (`total_thought_tokens` is separate). A cap that's too low truncates the JSON, which shows up as `invalid_output`, so it isn't silent.
 - **Budget:** 3.8 Flash's 20 RPD fits one full run (17 calls) per day, so A and B take one day each, and D on 3.8 would take two. Flash-Lite's 500 RPD makes prompt tweaks and C/C′/D reruns effectively free. Run A's token counts replace the §5.1 estimate for the report.
