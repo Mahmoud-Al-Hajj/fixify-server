@@ -31,6 +31,8 @@ import {
   DIAGNOSIS_FAILURE,
   DiagnosisError,
   THINKING_LEVELS,
+  DEFAULT_THINKING_LEVEL,
+  DEFAULT_MAX_OUTPUT_TOKENS,
   type DiagnoseOverrides,
   type DiagnosisFailureDetails,
   type DiagnosisInput,
@@ -572,8 +574,8 @@ async function main(): Promise<void> {
     startedAt: runStartedAt,
     model,
     settings: {
-      thinkingLevel: overrides.thinkingLevel ?? "default",
-      maxOutputTokens: overrides.maxOutputTokens ?? "default",
+      thinkingLevel: overrides.thinkingLevel ?? DEFAULT_THINKING_LEVEL,
+      maxOutputTokens: overrides.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
     },
     promptVersion: PROMPT_VERSION,
     systemInstructionSha1: createHash("sha1")

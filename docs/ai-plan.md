@@ -362,11 +362,11 @@ Checked against the Gemini docs on 2026-09-27.
 ### 5.1 Model
 
 - **Env var `GEMINI_MODEL`**, not hard-coded. `ai_diagnosis.model` records which model produced each diagnosis.
-- **Start with `gemini-3.8-flash`** (free tier, reads images). Check its free limits on the AI Studio rate-limit page for your project, since Google doesn't publish one fixed number.
-- **Compare against `gemini-3.5-flash-lite`** on the same test photos (§14.7).
+- **Main model `gemini-3.1-flash-lite`, fallback `gemini-3.5-flash-lite`** (`GEMINI_FALLBACK_MODEL`, the hedge target in §12.2). Both are free: 15 RPM, 500 RPD. Chosen from the runs in §14.7.
+- **3.8 / 3.7 / 3.6 / 3.5 Flash dropped:** 20 RPD and 503s at peak, and failed calls count against RPD.
 - **No preview models.** They get renamed and retired.
-- **Paid-tier reference for the report:** about 8k input and 1k output tokens per diagnosis ≈ **$0.01** on 3.8 Flash ($0.75 / $3.75 per million, through 2026). Replaced by measured token counts from §14 run A.
-- Measured so far: about $0.003 on the text-only `no-trade` call. Photo cases cost more (image tokens), so run A's numbers replace both figures.
+- **Paid-tier reference for the report:** about 8k input and 1k output tokens per diagnosis ≈ **$0.01** on 3.8 Flash ($0.75 / $3.75 per million, through 2026).
+- **Measured per diagnosis** (the 3.1 Flash-Lite run): about 2.1K input tokens (about 1.1K per photo), about 250 output and about 110 thinking. The text-only `no-trade` call cost about $0.003.
 
 ### 5.2 API: Interactions, always `store: false`
 
@@ -784,23 +784,20 @@ Some cases accept two categories on purpose: a ceiling stain really could be eit
 
 ### 14.7 Runs: one change at a time
 
-**Free-tier limits** (measured 2026-09-27): `gemini-3.8-flash` 5 RPM / 20 RPD; `gemini-3.5-flash-lite` 15 RPM / 500 RPD. So prompt tuning happens on 3.5 Flash-Lite, and 3.8 Flash's daily quota is spent only on the comparison runs A and B, on separate days.
+**Results** (`thinking_level: low`):
 
-Run order: C → prompt tweaks → A → B → D.
-
-| Run | Model | Settings | Purpose |
+| Model | Result | Latency at peak | Notes |
 |---|---|---|---|
-| C | `gemini-3.5-flash-lite` | `thinking_level: low`, no output cap (run A hasn't set one yet) | is the smaller model good enough? Prompt tweaks are rerun here |
-| A | `gemini-3.8-flash` | SDK defaults | baseline: real tokens, latency, quality (one day's quota) |
-| B | `gemini-3.8-flash` | `thinking_level: low` + output cap from A | faster or cheaper without getting worse? (another day) |
-| D | the winner | `--repeat 2` | flakiness: a case that flips between runs is a prompt problem |
+| `gemini-3.5-flash-lite` | 17/17 (prompt v3) | 8–72 s | |
+| `gemini-3.1-flash-lite` | 16/16 answered | 3–13 s, one 48 s outlier | one 503; 2 unwanted safety notes, 1 confidence miss |
 
+- Decided 2026-09-28: gemini-3.1-flash-lite main, gemini-3.5-flash-lite fallback via the hedge (§12.2). Peak latency is handled by the hedge, not by the timeout, which stays 45 s.
+- Runs A, B and C′ dropped.
+- **Regression check:** the replay script stays. Any prompt change gets one full run on each model.
 - C′ dropped: run C reported 0 thinking tokens at thinking_level low, so minimal vs low has nothing to compare.
-- Latency on 2026-09-28 (evening Beirut, US daytime) ranged 8–72 s with 1 HTTP attempt and 0 thinking tokens per call: queueing at Google. Rerun at a quiet hour before deciding the timeout.
-- **Winner:** must meet the §14.6 bar. Prefer the model whose free quota covers a demo (Flash-Lite). No paid key is available. If only 3.8 Flash passes, first try prompt changes on Flash-Lite (bump PROMPT_VERSION, rerun C). If Flash-Lite still misses the bar, 3.8 Flash becomes the default and the demo runs inside its free quota (20 requests/day): no replays on demo day, and the replay script's pause and --case flags are used to keep testing within quota.
+- Latency on 2026-09-28 (evening Beirut, US daytime) ranged 8–72 s with 1 HTTP attempt and 0 thinking tokens per call: queueing at Google.
 - **Thinking levels:** 3.8 Flash supports `low`, `medium` and `high` (default `medium`; `minimal` returns an error), so run B is `low`. 3.5 Flash-Lite supports `minimal` to `high`, default `minimal`.
 - **Output-token cap:** the output cap is set per model from that model's own runs: about twice the largest **output + thought** tokens seen (run C for Flash-Lite, run A for 3.8 Flash). `max_output_tokens` includes thinking tokens, while `usage.total_output_tokens` reports output without them (`total_thought_tokens` is separate). A cap that's too low truncates the JSON, which shows up as `invalid_output`, so it isn't silent. **Flash-Lite: 1024.** Largest output + thought in run C was 226 tokens; 1024 leaves room for thinking on real photos, and the cap costs nothing unless reached.
-- **Budget:** 3.8 Flash's 20 RPD fits one full run (17 calls) per day, so A and B take one day each, and D on 3.8 would take two. Flash-Lite's 500 RPD makes prompt tweaks and C/D reruns effectively free. Run A's token counts replace the §5.1 estimate for the report.
 - The chosen model, thinking level and cap become the constants/env defaults in `gemini.ts`. Any prompt or schema change that gets committed bumps `PROMPT_VERSION`.
 
 ### 14.8 Unit tests

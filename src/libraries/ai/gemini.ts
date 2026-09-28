@@ -32,6 +32,11 @@ export const THINKING_LEVELS = ["minimal", "low", "medium", "high"] as const;
 
 export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 
+// The settings chosen in docs/ai-plan.md §14.7. max_output_tokens includes
+// thinking tokens.
+export const DEFAULT_THINKING_LEVEL: ThinkingLevel = "low";
+export const DEFAULT_MAX_OUTPUT_TOKENS = 1024;
+
 export interface DiagnosisInput {
   messages: PromptMessage[];
   photos: PromptPhoto[];
@@ -114,7 +119,11 @@ export async function diagnose(
           mime_type: "application/json",
           schema: DIAGNOSIS_JSON_SCHEMA,
         },
-        ...generationConfig(overrides),
+        generation_config: {
+          thinking_level: overrides.thinkingLevel ?? DEFAULT_THINKING_LEVEL,
+          max_output_tokens:
+            overrides.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+        },
         store: false,
       },
       // The SDK retries 429 and 5xx by default; §12.2 allows no retry on 429,
@@ -177,17 +186,6 @@ export async function diagnose(
     outputText,
     interactionStatus: interaction.status,
     usage,
-  };
-}
-
-function generationConfig(overrides: DiagnoseOverrides) {
-  const { thinkingLevel, maxOutputTokens } = overrides;
-  if (thinkingLevel === undefined && maxOutputTokens === undefined) return {};
-  return {
-    generation_config: {
-      thinking_level: thinkingLevel,
-      max_output_tokens: maxOutputTokens,
-    },
   };
 }
 
