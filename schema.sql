@@ -81,6 +81,7 @@ CREATE TABLE intake_sessions (
   customer_id   CHAR(36) CHARACTER SET ascii NOT NULL,
   ai_status     VARCHAR(10) NOT NULL DEFAULT 'none',
   ai_diagnosis  JSON,
+  analysis_attempts TINYINT UNSIGNED NOT NULL DEFAULT 0,  -- capped at 3 (migration 004)
   created_at    DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   updated_at    DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
                             ON UPDATE CURRENT_TIMESTAMP(3),

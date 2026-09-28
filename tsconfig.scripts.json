@@ -1,0 +1,10 @@
+{
+  // Type-checks the replay script and fixtures, which live outside src/ and
+  // are never built. Run by npm run lint.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "noEmit": true
+  },
+  "include": ["src/**/*", "scripts/**/*.ts", "fixtures/**/*.ts"]
+}
