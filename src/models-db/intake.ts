@@ -111,6 +111,49 @@ export async function findIntakeSession(
     : null;
 }
 
+// Locks the session row for the rest of the transaction. Must be the
+// transaction's first read: InnoDB fixes its snapshot at the first plain
+// read, so a read before the lock could miss rows committed while waiting.
+// Served by the primary key.
+export async function lockIntakeSession(
+  conn: PoolConnection,
+  id: string
+): Promise<{ customerId: string; aiStatus: AiStatus } | null> {
+  const [rows] = await conn.query<
+    Array<RowDataPacket & { customer_id: string; ai_status: string }>
+  >(
+    `SELECT customer_id, ai_status FROM intake_sessions WHERE id = ? FOR UPDATE`,
+    [id]
+  );
+  const row = rows[0];
+  return row
+    ? { customerId: row.customer_id, aiStatus: row.ai_status as AiStatus }
+    : null;
+}
+
+// Whether a request was booked from the session, and how many photos it
+// holds. Read after lockIntakeSession, in the same transaction. Served by
+// uq_req_intake_session, fk_im_session and fk_ip_message.
+export async function readSessionFreeze(
+  conn: PoolConnection,
+  id: string
+): Promise<{ booked: boolean; photoCount: number }> {
+  const [rows] = await conn.query<
+    Array<RowDataPacket & { booked: number; photo_count: number }>
+  >(
+    `SELECT EXISTS (SELECT 1 FROM requests WHERE intake_session_id = ?) AS booked,
+            (SELECT COUNT(*) FROM intake_photos p
+             JOIN intake_messages m ON m.id = p.message_id
+             WHERE m.session_id = ?) AS photo_count`,
+    [id, id]
+  );
+  const row = rows[0];
+  return {
+    booked: Number(row?.booked) === 1,
+    photoCount: Number(row?.photo_count ?? 0),
+  };
+}
+
 // The conversation in order (by id, not created_at). Served by fk_im_session
 // and fk_ip_message.
 export async function listIntakeMessages(

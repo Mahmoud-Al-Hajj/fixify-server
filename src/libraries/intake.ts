@@ -10,20 +10,26 @@ import {
   findIntakeSession,
   listIntakeMessages,
   findIntakePhotoUrl,
+  lockIntakeSession,
+  readSessionFreeze,
   type IntakeSession,
   type IntakeMessage,
 } from "../models-db/intake";
 import { MESSAGE_SENDER } from "../constants/message-sender";
+import { AI_STATUS } from "../constants/ai-status";
 import {
   ValidationError,
   NotFoundError,
   ForbiddenError,
   ConflictError,
+  ERROR_CODE,
 } from "../constants/errors";
 import { logger } from "../config/logger";
 
 const UPLOADS_DIR = path.resolve("uploads");
 const INTAKE_PHOTO_DIR = "intake";
+// Disk space, not the AI: only the newest few photos go to the model.
+const MAX_PHOTOS_PER_SESSION = 20;
 
 export interface Photo {
   buffer: Buffer;
@@ -63,13 +69,13 @@ async function removePhotos(urls: readonly string[]): Promise<void> {
   }
 }
 
-// Stores the turn's photos, then its message and photo rows in one
-// transaction, after `first` (creating the session, for a first turn). If
-// the transaction fails the files are removed again.
+// Stores the turn's photos, then, in one transaction, runs `prepare` (create
+// the session, or lock and check it) and inserts the message and photo rows.
+// If the transaction fails or refuses the turn, the files are removed again.
 async function recordCustomerTurn(
   sessionId: string,
   turn: CustomerTurn,
-  first?: (conn: PoolConnection) => Promise<void>
+  prepare: (conn: PoolConnection) => Promise<void>
 ): Promise<number> {
   if (turn.body === null && turn.photos.length === 0) {
     throw new ValidationError("Send a message, a photo, or both");
@@ -77,7 +83,7 @@ async function recordCustomerTurn(
   const urls = await storePhotos(turn);
   try {
     return await withTransaction(async (conn) => {
-      if (first) await first(conn);
+      await prepare(conn);
       const messageId = await insertIntakeMessage(conn, {
         sessionId,
         sender: MESSAGE_SENDER.CUSTOMER,
@@ -108,18 +114,51 @@ export async function createIntakeSession(
 }
 
 // An intake session belongs to its customer; nobody else reaches it by id.
+// Another customer's session is reported as not found, so its existence is
+// not revealed.
 async function loadOwnSession(
   sessionId: string,
   customerId: string
 ): Promise<IntakeSession> {
   const session = await findIntakeSession(sessionId);
-  if (!session) {
+  if (!session || session.customerId !== customerId) {
     throw new NotFoundError("Intake session not found");
   }
-  if (session.customerId !== customerId) {
-    throw new ForbiddenError("This intake session belongs to another customer");
-  }
   return session;
+}
+
+// Add-message's refusals, checked under the session lock so that a booking,
+// an analysis start or a concurrent message cannot slip in between the check
+// and the insert (ai-plan §2.7, §12.3).
+async function lockSessionForTurn(
+  conn: PoolConnection,
+  sessionId: string,
+  customerId: string,
+  newPhotos: number
+): Promise<void> {
+  const session = await lockIntakeSession(conn, sessionId);
+  if (!session || session.customerId !== customerId) {
+    throw new NotFoundError("Intake session not found");
+  }
+  const { booked, photoCount } = await readSessionFreeze(conn, sessionId);
+  if (booked) {
+    throw new ConflictError(
+      "This problem has already been booked; describe a new one in a new session",
+      ERROR_CODE.SESSION_ALREADY_BOOKED
+    );
+  }
+  if (session.aiStatus === AI_STATUS.PENDING) {
+    throw new ConflictError(
+      "Wait for the diagnosis to finish before adding more",
+      ERROR_CODE.ANALYSIS_PENDING
+    );
+  }
+  if (photoCount + newPhotos > MAX_PHOTOS_PER_SESSION) {
+    throw new ValidationError(
+      `A problem can have at most ${MAX_PHOTOS_PER_SESSION} photos; this one already has ${photoCount}`,
+      ERROR_CODE.SESSION_PHOTO_CAP_REACHED
+    );
+  }
 }
 
 export async function addCustomerMessage(
@@ -127,13 +166,9 @@ export async function addCustomerMessage(
   customerId: string,
   turn: CustomerTurn
 ): Promise<IntakeMessage> {
-  const session = await loadOwnSession(sessionId, customerId);
-  if (session.requestId !== null) {
-    throw new ConflictError(
-      "This problem has already been booked; describe a new one in a new session"
-    );
-  }
-  const messageId = await recordCustomerTurn(sessionId, turn);
+  const messageId = await recordCustomerTurn(sessionId, turn, (conn) =>
+    lockSessionForTurn(conn, sessionId, customerId, turn.photos.length)
+  );
   const message = (await listIntakeMessages(sessionId)).find(
     (candidate) => candidate.id === messageId
   );
