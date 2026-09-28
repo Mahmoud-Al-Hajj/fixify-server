@@ -55,6 +55,16 @@ interface CallRecord {
   caseId: string;
   repeat: number;
   latencyMs: number;
+  // The HTTP wait (the SDK's fetch until it resolved), and the time from the
+  // response to the end of the call: reading the body, the SDK's parsing,
+  // JSON.parse and zod. The first call's SDK load is in neither, only in
+  // latencyMs.
+  httpMs: number | null;
+  afterResponseMs: number | null;
+  httpAttempts: number; // retries are off, so always 1
+  // The response's usage object exactly as sent, all keys, to check which
+  // token fields exist (gemini.ts reads total_input/output/thought_tokens).
+  rawUsage: unknown;
   wouldHaveTimedOut: boolean;
   interactionStatus: string | null;
   outputText: string | null;
@@ -191,6 +201,51 @@ function toInput(
   return input;
 }
 
+// The SDK's default fetcher calls the global fetch for every HTTP attempt, so
+// wrapping it counts the attempts and times the last one. Replay only.
+const http = {
+  attempts: 0,
+  responseMs: null as number | null,
+  respondedAt: null as number | null,
+  usage: null as Promise<unknown> | null,
+};
+
+// Reads `usage` from a copy of the response body; the SDK reads the original.
+async function usageOf(response: Response): Promise<unknown> {
+  try {
+    const body: unknown = await response.json();
+    return typeof body === "object" && body !== null && "usage" in body
+      ? body.usage
+      : null;
+  } catch {
+    return null; // not JSON (e.g. an error page): no usage to record
+  }
+}
+const realFetch = globalThis.fetch;
+const instrumentedFetch: typeof fetch = async (input, init) => {
+  http.attempts += 1;
+  const startedAt = performance.now();
+  const response = await realFetch(input, init);
+  http.respondedAt = performance.now();
+  http.responseMs = http.respondedAt - startedAt;
+  http.usage = usageOf(response.clone()); // awaited in runCase
+  return response;
+};
+globalThis.fetch = instrumentedFetch;
+
+function timingOf(startedAt: number) {
+  const endedAt = performance.now();
+  const latencyMs = Math.round(endedAt - startedAt);
+  return {
+    latencyMs,
+    httpMs: http.responseMs === null ? null : Math.round(http.responseMs),
+    afterResponseMs:
+      http.respondedAt === null ? null : Math.round(endedAt - http.respondedAt),
+    httpAttempts: http.attempts,
+    wouldHaveTimedOut: latencyMs > TIMEOUT_MS,
+  };
+}
+
 function runChecks(testCase: DiagnosisCase, d: Diagnosis): Check[] {
   const { expect } = testCase;
   const checks: Check[] = [{ name: "schema", pass: true }];
@@ -247,16 +302,20 @@ async function runCase(
   overrides: DiagnoseOverrides
 ): Promise<CallRecord> {
   const input = toInput(testCase, photos);
-  const startedAt = Date.now();
+  http.attempts = 0;
+  http.responseMs = null;
+  http.respondedAt = null;
+  http.usage = null;
+  const startedAt = performance.now();
   try {
     const result = await diagnose(input, overrides);
-    const latencyMs = Date.now() - startedAt;
+    const timing = timingOf(startedAt);
     const checks = runChecks(testCase, result.diagnosis);
     return {
       caseId: testCase.id,
       repeat,
-      latencyMs,
-      wouldHaveTimedOut: latencyMs > TIMEOUT_MS,
+      ...timing,
+      rawUsage: await http.usage,
       interactionStatus: result.interactionStatus,
       outputText: result.outputText,
       usage: result.usage,
@@ -267,13 +326,13 @@ async function runCase(
     };
   } catch (err) {
     if (!(err instanceof DiagnosisError)) throw err;
-    const latencyMs = Date.now() - startedAt;
+    const timing = timingOf(startedAt);
     const { outputText, usage, interactionStatus, ...details } = err.details;
     return {
       caseId: testCase.id,
       repeat,
-      latencyMs,
-      wouldHaveTimedOut: latencyMs > TIMEOUT_MS,
+      ...timing,
+      rawUsage: await http.usage,
       interactionStatus: interactionStatus ?? null,
       outputText: outputText ?? null,
       usage: usage ?? null,
@@ -308,6 +367,8 @@ function summaryRow(call: CallRecord, testCase: DiagnosisCase) {
       d ? d.safetyNote !== null : null
     ),
     latency: `${(call.latencyMs / 1000).toFixed(1)}s${call.wouldHaveTimedOut ? " SLOW" : ""}`,
+    "http / after": `${call.httpMs ?? "-"} / ${call.afterResponseMs ?? "-"} ms`,
+    tries: call.httpAttempts,
     "tokens in/out/think": tokens,
     result: call.pass
       ? "pass"

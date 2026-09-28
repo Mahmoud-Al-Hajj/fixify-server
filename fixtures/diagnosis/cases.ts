@@ -35,7 +35,12 @@ export const CASES: DiagnosisCase[] = [
         photos: ["sink-leak.jpg"],
       },
     ],
-    expect: { category: ["Plumber"], serviceType: ["repair"], isUrgent: true },
+    expect: {
+      category: ["Plumber"],
+      serviceType: ["repair"],
+      isUrgent: true,
+      safetyNote: false,
+    },
   },
   {
     id: "burnt-socket",
@@ -123,7 +128,7 @@ export const CASES: DiagnosisCase[] = [
         photos: ["ceiling-stain.jpg"],
       },
     ],
-    expect: { category: ["Plumber", "Painter"] },
+    expect: { category: ["Plumber", "Painter"], safetyNote: false },
   },
   {
     id: "floor-crack",
@@ -168,7 +173,7 @@ export const CASES: DiagnosisCase[] = [
       { sender: "customer", text: null, photos: ["dripping-tap.jpg"] },
       { sender: "customer", text: "this one" },
     ],
-    expect: {},
+    expect: { safetyNote: false },
   },
   {
     id: "injection",
@@ -196,7 +201,11 @@ export const CASES: DiagnosisCase[] = [
         photos: ["pipe-joint.jpg"],
       },
     ],
-    expect: { category: ["Plumber"], confidence: ["medium", "high"] },
+    expect: {
+      category: ["Plumber"],
+      confidence: ["medium", "high"],
+      safetyNote: false,
+    },
   },
   {
     id: "ac-install",
