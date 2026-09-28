@@ -6,7 +6,7 @@ import {
 
 // Bump whenever SYSTEM_INSTRUCTION or either diagnosis schema changes; stored
 // in ai_diagnosis.promptVersion.
-export const PROMPT_VERSION = 3;
+export const PROMPT_VERSION = 4;
 
 // A Record so that adding a category without a hint fails to compile.
 const CATEGORY_HINTS: Record<CategoryName, string> = {
@@ -77,7 +77,8 @@ Never give repair instructions.
 TITLE: a short headline of the likely problem, under 80 characters,
 e.g. "Likely worn seal under the sink".
 
-EXPLANATION: 2–3 short plain sentences: what is probably wrong and what
+EXPLANATION: Write it to the customer, using "you" (never "the customer").
+2–3 short plain sentences: what is probably wrong and what
 the professional will do. If there is a simple step the customer can
 take while waiting to limit damage (a bucket under the leak, closing
 the water valve, not using the sink), add it as one more short
@@ -85,7 +86,7 @@ sentence. That is not a repair. If confidence is low, the last sentence
 must say which photo or detail would help, e.g. "A photo of the fridge
 would help."
 Never mention prices. Never tell the customer to do the repair
-themselves.
+themselves. Don't repeat the safety note in the explanation.
 
 PARTS: parts or materials the professional will likely need, at most 10,
 named as a hardware store would. No tools. Empty if none or unsure.

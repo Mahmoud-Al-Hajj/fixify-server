@@ -238,7 +238,7 @@ export type Diagnosis = z.infer<typeof diagnosisSchema>;
 
 ```ts
 // src/libraries/ai/diagnosis-prompt.ts
-export const PROMPT_VERSION = 3;
+export const PROMPT_VERSION = 4;
 
 export const SYSTEM_INSTRUCTION = `
 You are the intake assistant for Fixify, a home-services app in Lebanon.
@@ -295,7 +295,8 @@ Never give repair instructions.
 TITLE: a short headline of the likely problem, under 80 characters,
 e.g. "Likely worn seal under the sink".
 
-EXPLANATION: 2–3 short plain sentences: what is probably wrong and what
+EXPLANATION: Write it to the customer, using "you" (never "the customer").
+2–3 short plain sentences: what is probably wrong and what
 the professional will do. If there is a simple step the customer can
 take while waiting to limit damage (a bucket under the leak, closing
 the water valve, not using the sink), add it as one more short
@@ -303,7 +304,7 @@ sentence. That is not a repair. If confidence is low, the last sentence
 must say which photo or detail would help, e.g. "A photo of the fridge
 would help."
 Never mention prices. Never tell the customer to do the repair
-themselves.
+themselves. Don't repeat the safety note in the explanation.
 
 PARTS: parts or materials the professional will likely need, at most 10,
 named as a hardware store would. No tools. Empty if none or unsure.
@@ -785,20 +786,21 @@ Some cases accept two categories on purpose: a ceiling stain really could be eit
 
 **Free-tier limits** (measured 2026-09-27): `gemini-3.8-flash` 5 RPM / 20 RPD; `gemini-3.5-flash-lite` 15 RPM / 500 RPD. So prompt tuning happens on 3.5 Flash-Lite, and 3.8 Flash's daily quota is spent only on the comparison runs A and B, on separate days.
 
-Run order: C → prompt tweaks and C′ → A → B → D.
+Run order: C → prompt tweaks → A → B → D.
 
 | Run | Model | Settings | Purpose |
 |---|---|---|---|
 | C | `gemini-3.5-flash-lite` | `thinking_level: low`, no output cap (run A hasn't set one yet) | is the smaller model good enough? Prompt tweaks are rerun here |
-| C′ | `gemini-3.5-flash-lite` | its default thinking (`minimal`), no output cap | does it still pass with less thinking? |
 | A | `gemini-3.8-flash` | SDK defaults | baseline: real tokens, latency, quality (one day's quota) |
 | B | `gemini-3.8-flash` | `thinking_level: low` + output cap from A | faster or cheaper without getting worse? (another day) |
 | D | the winner | `--repeat 2` | flakiness: a case that flips between runs is a prompt problem |
 
+- C′ dropped: run C reported 0 thinking tokens at thinking_level low, so minimal vs low has nothing to compare.
+- Latency on 2026-09-28 (evening Beirut, US daytime) ranged 8–72 s with 1 HTTP attempt and 0 thinking tokens per call: queueing at Google. Rerun at a quiet hour before deciding the timeout.
 - **Winner:** must meet the §14.6 bar. Prefer the model whose free quota covers a demo (Flash-Lite). No paid key is available. If only 3.8 Flash passes, first try prompt changes on Flash-Lite (bump PROMPT_VERSION, rerun C). If Flash-Lite still misses the bar, 3.8 Flash becomes the default and the demo runs inside its free quota (20 requests/day): no replays on demo day, and the replay script's pause and --case flags are used to keep testing within quota.
 - **Thinking levels:** 3.8 Flash supports `low`, `medium` and `high` (default `medium`; `minimal` returns an error), so run B is `low`. 3.5 Flash-Lite supports `minimal` to `high`, default `minimal`.
-- **Output-token cap:** the output cap is set per model from that model's own runs: about twice the largest **output + thought** tokens seen (run C for Flash-Lite, run A for 3.8 Flash). `max_output_tokens` includes thinking tokens, while `usage.total_output_tokens` reports output without them (`total_thought_tokens` is separate). A cap that's too low truncates the JSON, which shows up as `invalid_output`, so it isn't silent.
-- **Budget:** 3.8 Flash's 20 RPD fits one full run (17 calls) per day, so A and B take one day each, and D on 3.8 would take two. Flash-Lite's 500 RPD makes prompt tweaks and C/C′/D reruns effectively free. Run A's token counts replace the §5.1 estimate for the report.
+- **Output-token cap:** the output cap is set per model from that model's own runs: about twice the largest **output + thought** tokens seen (run C for Flash-Lite, run A for 3.8 Flash). `max_output_tokens` includes thinking tokens, while `usage.total_output_tokens` reports output without them (`total_thought_tokens` is separate). A cap that's too low truncates the JSON, which shows up as `invalid_output`, so it isn't silent. **Flash-Lite: 1024.** Largest output + thought in run C was 226 tokens; 1024 leaves room for thinking on real photos, and the cap costs nothing unless reached.
+- **Budget:** 3.8 Flash's 20 RPD fits one full run (17 calls) per day, so A and B take one day each, and D on 3.8 would take two. Flash-Lite's 500 RPD makes prompt tweaks and C/D reruns effectively free. Run A's token counts replace the §5.1 estimate for the report.
 - The chosen model, thinking level and cap become the constants/env defaults in `gemini.ts`. Any prompt or schema change that gets committed bumps `PROMPT_VERSION`.
 
 ### 14.8 Unit tests
