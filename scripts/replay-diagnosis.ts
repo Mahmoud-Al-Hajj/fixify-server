@@ -8,8 +8,8 @@
 //   npm run replay -- --pause 4                      seconds between calls
 //   npm run replay -- --skip-missing                 skip cases without photos
 //
-// Sequential, --pause seconds between calls (default 13: gemini-3.8-flash's
-// free tier allows 5 per minute), stops on the first 429. Without
+// Sequential, --pause seconds between calls (default 4: Flash-Lite's free
+// tier allows 15 per minute), stops on the first 429. Without
 // --skip-missing a missing photo stops the run before any call. Writes every
 // call to fixtures/diagnosis/runs/<timestamp>-<model>.json and prints a
 // summary.
@@ -42,7 +42,7 @@ import {
 } from "../src/libraries/ai/diagnosis-failure";
 import { CASES, type DiagnosisCase } from "../fixtures/diagnosis/cases";
 
-const DEFAULT_PAUSE_SECONDS = 13;
+const DEFAULT_PAUSE_SECONDS = 4;
 const TIMEOUT_MS = 45_000; // the production timeout (§12.1)
 const SLOW_MS = 30_000; // §14.6: revisit the timeout or thinking level above this
 const FIXTURES_DIR = path.join(__dirname, "..", "fixtures", "diagnosis");

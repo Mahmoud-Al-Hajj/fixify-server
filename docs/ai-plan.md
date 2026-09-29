@@ -121,7 +121,7 @@ The reason: a vision call on the free tier takes seconds and can hit a 429, and 
 |---|---|---|
 | `POST /intake-sessions/:id/messages` | 201 | 404 not yours · 409 analysis pending · 409 session booked · validation error over 20 photos per session |
 | `POST /intake-sessions/:id/analysis` | 202 `{ aiStatus: "pending" }` | 404 not yours · 400 no text message · 409 already pending · 409 session booked · 429 `ANALYSIS_CAP_REACHED` · 429 `ANALYSIS_RATE_LIMITED` (over 10 starts per hour) · 503 AI not configured |
-| `GET /intake-sessions/:id` | 200: messages, photos, `aiStatus`, diagnosis | 404 not yours |
+| `GET /intake-sessions/:id` | 200: messages, photos, `aiStatus`, diagnosis (only when `done`, otherwise `null`) | 404 not yours |
 
 404 for another customer's session means you don't reveal that it exists.
 
@@ -212,11 +212,11 @@ export type Diagnosis = z.infer<typeof diagnosisSchema>;
 
 - `ai_diagnosis` on success:
   ```json
-  { "model": "<GEMINI_MODEL value>", "promptVersion": 1, "completedAt": "<Beirut wall clock>", "diagnosis": { } }
+  { "model": "<the model that answered, after the hedge>", "promptVersion": <PROMPT_VERSION, now 4>, "completedAt": "<Beirut wall clock>", "diagnosis": { } }
   ```
   The stored diagnosis is the model's output after validation. Values are never edited. `completedAt` is set by `markDone` and decides whether a diagnosis was late (§13.4).
-- On failure `ai_diagnosis` stays `NULL`, and the raw output goes to the winston log. (The JSON column would reject invalid output anyway.)
-- **Re-running overwrites `ai_diagnosis`.** Earlier runs survive only as their AI messages (the explanation text).
+- On failure `ai_diagnosis` is left unchanged (`NULL` on a first attempt, the previous diagnosis after a failed re-run); GET and booking use it only when `ai_status` is `done`. The raw output goes to the winston log. (The JSON column would reject invalid output anyway.)
+- **A successful re-run overwrites `ai_diagnosis`.** Earlier runs survive only as their AI messages (the explanation text).
 
 ---
 
@@ -234,7 +234,7 @@ export type Diagnosis = z.infer<typeof diagnosisSchema>;
 - **The JSON Schema is written by hand, not generated from zod.** It uses only keywords in Gemini's subset (`type`, `enum`, `minimum`/`maximum`, `maxItems`, `required`, `description`), with a `description` on each field. Nullable fields use `"type": ["string", "null"]`. A zod-to-JSON converter can emit unsupported keywords, and overly complex schemas may be rejected.
 - **A unit test** checks that `DIAGNOSIS_JSON_SCHEMA` and `diagnosisSchema` have the same field names, the same required fields and the same enum values, so they can't drift apart.
 
-### 4.2 System instruction (v1, tuned during testing)
+### 4.2 System instruction (v4, tuned during testing)
 
 ```ts
 // src/libraries/ai/diagnosis-prompt.ts
@@ -439,7 +439,7 @@ Shown only once the request is `scheduled`, meaning the provider accepted. The a
 
 ## 9. Schema changes
 
-- **003:** `ai_status` gets `'none'`, which becomes the default. (In progress, C8.)
+- **003:** `ai_status` gets `'none'`, which becomes the default. (Applied.)
 - **004:** `intake_sessions.analysis_attempts TINYINT UNSIGNED NOT NULL DEFAULT 0`.
 - `db schema.md` gets updated to match, together with `requests.revised_price`.
 
@@ -449,7 +449,7 @@ Shown only once the request is `scheduled`, meaning the provider accepted. The a
   - remove price range and tags
   - add: the ai_status meanings (C8), the attempts cap, the freeze rule, the booking derivation table (§7), the areas rule, the English-only AI output rule, the photo rules (§4.4)
   - add: Interactions API with `store: false` always, `@google/genai` pinned and used only in `gemini.ts`, AI enabled only when both `GEMINI_API_KEY` and `GEMINI_MODEL` are set (otherwise 503), hand-written JSON Schema kept in agreement with zod by a test
-  - add (item 5): 45 s timeout; one retry for network/500/503 only; 10 analysis starts per customer per hour; 20 photos per session; the startup sweep assumes one server process and has no time condition
+  - add (item 5): 45 s timeout; no same-model retry, a hedge to the fallback model instead (§12.2); 10 analysis starts per customer per hour; 20 photos per session; the startup sweep assumes one server process and has no time condition
   - replace the "under review" logging rule with: never log prompts, customer text or photos; model output is logged only when an analysis fails, at debug level, cut to 2 KB
   - add (item 6): booking body is a union of two strict shapes; booking locks the session row, the visit and provider lock stay at quote acceptance; visit length at acceptance = `COALESCE(estimated_duration_minutes, 60)`; `deriveBookingFields` and `buildDescription` are pure and unit-tested (tests rule extended); REQUEST_CREATED payload fields; `completedAt` in the `ai_diagnosis` wrapper and the late rule
   - add (item 7): live Gemini calls only in `scripts/replay-diagnosis.ts`, never in `npm test`; the replay goes through the production `buildContent` → `diagnose()` path; `fixtures/diagnosis/runs/` is gitignored and may hold raw model output (fixture data, not customer data, so the §12.4 logging rule doesn't apply there); `gemini.ts` throws errors carrying a `kind`
@@ -459,7 +459,7 @@ Shown only once the request is `scheduled`, meaning the provider accepted. The a
   - remove price range and tags from 4.7, the abstract and the significance section
   - use the category names "Plumber" and "Electrician" in examples
   - one sentence on free-tier privacy (test photos only)
-  - optionally the ~$0.01-per-diagnosis paid-tier figure (measured in §14 run A)
+  - optionally the ~$0.01-per-diagnosis paid-tier figure (the 3.1 Flash-Lite figures in §5.1)
   - optionally "MySQL-compatible (MariaDB)"
 
 ## 11. Backlog from this plan
@@ -509,7 +509,7 @@ Every failure ends in `failed` and the same customer screen (the manual trade pa
 
 - The client polls for 60 s. The server settles first, with room for one more poll.
 - The call races a timer. If the timer wins, the session becomes `failed`; a late answer hits the guarded `UPDATE … WHERE ai_status = 'pending'` and is discarded. Pass an abort signal too if the SDK accepts one.
-- **Low thinking level** and a **max output-token cap**, both compared against the defaults in §14.7. Claude Code checks the parameter names in the pinned SDK.
+- **Low thinking level** and a **max output-token cap**, settled in §14.7: thinking level `low`, `max_output_tokens` 1024.
 
 ### 12.2 Retries: a hedge to the fallback model
 
@@ -673,7 +673,7 @@ Goal: before building the endpoint, find out whether the prompt plus a free Gemi
 fixtures/diagnosis/
   cases.ts            17 cases: turns, photo filenames, expectations   (committed)
   photos/*.jpg        ~11 test photos, pre-compressed                  (committed)
-  sample-response.json  one good real response from run A              (committed)
+  sample-response.json  one good real response from a 3.1 Flash-Lite run (committed)
   runs/               one JSON file per replay run                     (gitignored)
 scripts/replay-diagnosis.ts
 ```
@@ -736,11 +736,11 @@ Some cases accept two categories on purpose: a ceiling stain really could be eit
   npm run replay -- --case burnt-socket       # one case
   npm run replay -- --repeat 2                # each case twice
   npm run replay -- --thinking low --max-output-tokens 2000
-  npm run replay -- --pause 4                 # seconds between calls (default 13)
+  npm run replay -- --pause 13                # seconds between calls (default 4)
   npm run replay -- --skip-missing            # skip cases whose photos are missing
   GEMINI_MODEL=<flash-lite name> npm run replay   # PowerShell: $env:GEMINI_MODEL="…"; npm run replay
   ```
-  - `--pause`: default 13 s, for gemini-3.8-flash's 5 requests per minute. Flash-Lite can use `--pause 4` (15 per minute).
+  - `--pause`: default 4 s, for Flash-Lite's 15 requests per minute. A model with 5 per minute needs `--pause 13`.
   - `--skip-missing`: skips cases whose photos are missing, lists them at the start and in the summary, and records them in the run file (`skipped`). Without it, a missing photo stops the run before any call, so an official run can't quietly skip cases. `--case` only checks that case's photos.
 - **First live call:** `npm run replay -- --case no-trade`, before any full run. It checks that Gemini accepts the nullable category enum (`"enum": [...names, null]`); a rejected schema shows up as `bad_request`.
 - **Behaviour:**
@@ -792,13 +792,13 @@ Some cases accept two categories on purpose: a ceiling stain really could be eit
 - **Regression check:** the replay script stays. Any prompt change gets one full run on each model.
 - C′ dropped: run C reported 0 thinking tokens at thinking_level low, so minimal vs low has nothing to compare.
 - Latency on 2026-09-28 (evening Beirut, US daytime) ranged 8–72 s with 1 HTTP attempt and 0 thinking tokens per call: queueing at Google.
-- **Thinking levels:** 3.8 Flash supports `low`, `medium` and `high` (default `medium`; `minimal` returns an error), so run B is `low`. 3.5 Flash-Lite supports `minimal` to `high`, default `minimal`.
-- **Output-token cap:** the output cap is set per model from that model's own runs: about twice the largest **output + thought** tokens seen (run C for Flash-Lite, run A for 3.8 Flash). `max_output_tokens` includes thinking tokens, while `usage.total_output_tokens` reports output without them (`total_thought_tokens` is separate). A cap that's too low truncates the JSON, which shows up as `invalid_output`, so it isn't silent. **Flash-Lite: 1024.** Largest output + thought in run C was 226 tokens; 1024 leaves room for thinking on real photos, and the cap costs nothing unless reached.
+- **Thinking levels:** 3.8 Flash supports `low`, `medium` and `high` (default `medium`; `minimal` returns an error). 3.5 Flash-Lite supports `minimal` to `high`, default `minimal`.
+- **Output-token cap:** the output cap is set per model from that model's own runs: about twice the largest **output + thought** tokens seen (run C for Flash-Lite). `max_output_tokens` includes thinking tokens, while `usage.total_output_tokens` reports output without them (`total_thought_tokens` is separate). A cap that's too low truncates the JSON, which shows up as `invalid_output`, so it isn't silent. **Flash-Lite: 1024.** Largest output + thought in run C was 226 tokens; 1024 leaves room for thinking on real photos, and the cap costs nothing unless reached.
 - The chosen model, thinking level and cap become the constants/env defaults in `gemini.ts`. Any prompt or schema change that gets committed bumps `PROMPT_VERSION`.
 
 ### 14.8 Unit tests
 
-Unchanged (`buildContent`, schema agreement, `deriveBookingFields`, `buildDescription`), plus one: `diagnosisSchema` parses `sample-response.json`, a real response saved from run A. No live call; it catches a zod change that would reject real Gemini output.
+Unchanged (`buildContent`, schema agreement, `deriveBookingFields`, `buildDescription`), plus one: `diagnosisSchema` parses `sample-response.json`, a real response saved from a 3.1 Flash-Lite run. No live call; it catches a zod change that would reject real Gemini output.
 
 ---
 

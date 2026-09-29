@@ -500,8 +500,10 @@ Rules, all load-bearing:
 3. **Store the validated diagnosis** in `intake_sessions.ai_diagnosis` as
    `{ model, promptVersion, completedAt, diagnosis }`, where `diagnosis` is the
    zod-validated output: unknown keys dropped, values never edited, and `completedAt` is
-   the Beirut wall-clock time the analysis was stored. On failure `ai_diagnosis` stays
-   `NULL`; a re-run overwrites it. It is an audit record.
+   the Beirut wall-clock time the analysis was stored. On failure `ai_diagnosis` is left
+   unchanged (`NULL` on a first attempt, the previous diagnosis after a failed re-run);
+   GET and booking use it only when `ai_status` is `done`. A successful re-run overwrites
+   it. It is an audit record.
    Never rewrite it when a user edits a derived value — the confirmed values go in their
    own columns on the request (`category_id`, `service_type`, `is_urgent`,
    `estimated_duration_minutes`, `description`) and in `request_items`. The original
