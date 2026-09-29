@@ -528,9 +528,11 @@ Rules, all load-bearing:
   Upload rules (`upload.ts`, plus `recordCustomerTurn` for the text-or-photo rule): JPEG
   or PNG only, checked by the file's bytes; at most 5 MB each; at most 5 per message;
   each message needs text, a photo, or both.
-- **Timeout and retries:** 45 s per analysis. One retry, only for network errors, 500 and
-  503, within the same 45 s; none for 429, 400, blocked or invalid output. A retry does
-  not count as an attempt.
+- **Timeout and hedge:** 45 s per analysis. No same-model retry: the fallback model
+  (`GEMINI_FALLBACK_MODEL`) starts after 12 s, or at once when the main model fails with
+  anything but a 400; the first valid diagnosis wins, the other call is aborted
+  (`hedged-diagnose.ts`). No fallback configured → no hedge. The hedge does not count as
+  an attempt.
 - **Limits:** 10 analysis starts per customer per hour (429 `ANALYSIS_RATE_LIMITED`); at
   most 20 photos per session, checked in `recordCustomerTurn` under the session lock.
 - **Startup sweep:** once at startup, before accepting requests:
@@ -593,6 +595,7 @@ so only test photos go through it — never real customer photos.
   `src/libraries/ai/gemini.ts`.
 - `GEMINI_MODEL` and `GEMINI_API_KEY` come from the server's environment, never the app.
   AI is enabled only when both are set; see "Security" for when either is missing.
+  `GEMINI_FALLBACK_MODEL` is optional: the hedge target (see "Timeout and hedge").
 - The response schema is a hand-written JSON Schema (`DIAGNOSIS_JSON_SCHEMA`), never
   generated from zod. A unit test keeps it in agreement with `diagnosisSchema`.
 - `gemini.ts` throws errors carrying a `kind` (`rate_limited | provider_error |

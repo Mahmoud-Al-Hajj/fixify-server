@@ -8,6 +8,8 @@ import {
   ConflictError,
   ValidationError,
   InvalidTransitionError,
+  TooManyRequestsError,
+  ServiceUnavailableError,
 } from "../constants/errors";
 
 const STATUS_BY_ERROR = new Map<Function, number>([
@@ -17,6 +19,8 @@ const STATUS_BY_ERROR = new Map<Function, number>([
   [NotFoundError, 404],
   [ConflictError, 409],
   [InvalidTransitionError, 409],
+  [TooManyRequestsError, 429],
+  [ServiceUnavailableError, 503],
 ]);
 
 export function errorHandler(

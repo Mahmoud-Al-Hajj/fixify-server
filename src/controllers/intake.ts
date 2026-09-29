@@ -1,5 +1,6 @@
 import type { Request, Response, NextFunction } from "express";
 import * as intakeService from "../libraries/intake";
+import { startAnalysis } from "../libraries/intake-analysis";
 import { requireUser } from "../middlewares/authenticate";
 import { NotFoundError } from "../constants/errors";
 import type { PhotoLocals } from "../middlewares/upload";
@@ -51,13 +52,12 @@ export async function addCustomerMessageHandler(
   res.status(201).json({ message: toMessageView(sessionId, message) });
 }
 
-// The diagnosis stays null until the intake-diagnosis AI step exists.
 export async function getIntakeSessionHandler(
   req: Request,
   res: Response<unknown, ParamsLocals<SessionIdParams>>
 ): Promise<void> {
   const customer = requireUser(req);
-  const { session, messages } = await intakeService.getOwnSession(
+  const { session, messages, diagnosis } = await intakeService.getOwnSession(
     res.locals.params.id,
     customer.id
   );
@@ -65,12 +65,22 @@ export async function getIntakeSessionHandler(
     session: {
       id: session.id,
       aiStatus: session.aiStatus,
-      diagnosis: null,
+      diagnosis,
       requestId: session.requestId,
       createdAt: session.createdAt,
       messages: messages.map((message) => toMessageView(session.id, message)),
     },
   });
+}
+
+// 202: the diagnosis runs in the background; the client polls the session.
+export async function startAnalysisHandler(
+  req: Request,
+  res: Response<unknown, ParamsLocals<SessionIdParams>>
+): Promise<void> {
+  const customer = requireUser(req);
+  const aiStatus = await startAnalysis(res.locals.params.id, customer.id);
+  res.status(202).json({ aiStatus });
 }
 
 export async function getIntakePhotoHandler(

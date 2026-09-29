@@ -104,7 +104,7 @@ The reason: a vision call on the free tier takes seconds and can hit a 429, and 
       AND NOT EXISTS (SELECT 1 FROM requests WHERE intake_session_id = ?);
    ```
    The session must also have at least one customer message with text (checked before the UPDATE).
-2. **Background:** load the messages and photos, call Gemini with a 45 s timeout (§12), validate the result with zod.
+2. **Background:** load the messages and the 6 newest photos, run the hedged diagnosis (main model, then the fallback model; §12.2) within 45 s, validate the result with zod.
 3. **Success, in one transaction:**
    ```sql
    UPDATE intake_sessions SET ai_status = 'done', ai_diagnosis = ?
@@ -497,12 +497,12 @@ Every failure ends in `failed` and the same customer screen (the manual trade pa
 
 | What happens | Example | What we do |
 |---|---|---|
-| Network error, Gemini 500/503 | model overloaded | retry once after ~2 s, then fail |
-| Gemini 429 | free quota used up | fail right away, no retry |
-| Gemini 400 | our schema or request is wrong | fail, log loudly (it's a bug) |
-| Blocked or empty output | safety filter, empty `output_text` | fail |
-| Invalid output | bad JSON, zod rejects it | fail; customer can tap Try again |
-| Too slow | slow call + thinking | 45 s timeout → fail |
+| Network error, Gemini 500/503 | model overloaded | start the fallback model at once (§12.2); fail if it fails too |
+| Gemini 429 | free quota used up | start the fallback model at once; fail if it fails too |
+| Gemini 400 | our schema or request is wrong | fail, no fallback, log loudly (it's a bug) |
+| Blocked or empty output | safety filter, empty `output_text` | start the fallback model; fail if it fails too |
+| Invalid output | bad JSON, zod rejects it | start the fallback model; fail if it fails too; customer can tap Try again |
+| Too slow | slow call + thinking | fallback starts at 12 s; 45 s timeout → fail |
 | Server crash mid-call | deploy, OOM | startup sweep → fail |
 
 ### 12.1 Timeout: 45 s
@@ -511,13 +511,14 @@ Every failure ends in `failed` and the same customer screen (the manual trade pa
 - The call races a timer. If the timer wins, the session becomes `failed`; a late answer hits the guarded `UPDATE … WHERE ai_status = 'pending'` and is discarded. Pass an abort signal too if the SDK accepts one.
 - **Low thinking level** and a **max output-token cap**, both compared against the defaults in §14.7. Claude Code checks the parameter names in the pinned SDK.
 
-### 12.2 Retries
+### 12.2 Retries: a hedge to the fallback model
 
-- **One retry**, only for network errors, 500 and 503, within the same 45 s budget.
-- **No retry** on 429, 400, blocked or invalid output.
-- **A 429 isn't always the daily quota.** It can also be the per-minute limit; then the provider message says "retry in Ns". How production handles that is decided in step 4.
-- An automatic retry doesn't count as an attempt. The 3-attempt cap counts the customer's taps.
-- **The SDK's built-in retries are turned off** in `gemini.ts` (`retries: { strategy: "none" }`). By default `@google/genai` 2.24.0 retries Interactions calls up to 4 times on 408/409/429/5XX and connection errors, for up to 30 s, which would break the no-retry-on-429 rule. Our single retry lives in `intake-analysis.ts` (step 4).
+- **No same-model retry.** The analysis hedges instead (`hedged-diagnose.ts`): the main model (`GEMINI_MODEL`) starts at once; the fallback (`GEMINI_FALLBACK_MODEL`) starts after 12 s if the main one hasn't answered, or at once when it fails with anything except `bad_request`. The first valid diagnosis wins and the other call is aborted. Both share the 45 s budget.
+- **No fallback on 400** (`bad_request`): our request or schema is wrong, and the fallback model would fail the same way. Other 4xx (for example an unknown model name) are `provider_error` and do start the fallback.
+- **A 429** (per-minute or daily quota) on the main model starts the fallback at once: each model has its own free-tier quota. A 429 on both fails the analysis.
+- Without `GEMINI_FALLBACK_MODEL` only the main model runs: no hedge and no retry.
+- The hedge doesn't count as an attempt. The 3-attempt cap counts the customer's taps.
+- **The SDK's built-in retries are turned off** in `gemini.ts` (`retries: { strategy: "none" }`). By default `@google/genai` 2.24.0 retries Interactions calls up to 4 times on 408/409/429/5XX and connection errors, for up to 30 s, which would retry the same model. The hedge replaces them.
 
 ### 12.3 Rate limits
 
@@ -540,8 +541,6 @@ Every failure ends in `failed` and the same customer screen (the manual trade pa
 
 ```ts
 // src/libraries/intake-analysis.ts (sketch; names follow the codebase)
-const TIMEOUT_MS = 45_000;
-
 export function startAnalysis(sessionId: string): void {
   // Not awaited: the POST already returned 202.
   void runAnalysis(sessionId).catch((err) =>
@@ -553,10 +552,7 @@ async function runAnalysis(sessionId: string): Promise<void> {
   const startedAt = Date.now();
   try {
     const input = await loadAnalysisInput(sessionId);            // messages + up to 6 newest photos
-    const diagnosis = await withTimeout(
-      retryOnceIfTransient(() => diagnose(input)),               // gemini.ts: call + JSON.parse + zod
-      TIMEOUT_MS,
-    );
+    const diagnosis = await hedgedDiagnose(primary, fallback);   // §12.2; gemini.ts: call + JSON.parse + zod, 45 s
     await markDone(sessionId, diagnosis);                        // guarded UPDATE + AI message, one transaction
     logger.info("analysis done", { sessionId, durationMs: Date.now() - startedAt });
   } catch (err) {

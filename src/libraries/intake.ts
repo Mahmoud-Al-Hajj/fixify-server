@@ -25,9 +25,10 @@ import {
   ERROR_CODE,
 } from "../constants/errors";
 import { logger } from "../config/logger";
+import { storedDiagnosisSchema, type Diagnosis } from "./ai/diagnosis-schema";
 
-const UPLOADS_DIR = path.resolve("uploads");
-const INTAKE_PHOTO_DIR = "intake";
+export const UPLOADS_DIR = path.resolve("uploads");
+export const INTAKE_PHOTO_DIR = "intake";
 // Disk space, not the AI: only the newest few photos go to the model.
 const MAX_PHOTOS_PER_SESSION = 20;
 
@@ -116,7 +117,7 @@ export async function createIntakeSession(
 // An intake session belongs to its customer; nobody else reaches it by id.
 // Another customer's session is reported as not found, so its existence is
 // not revealed.
-async function loadOwnSession(
+export async function loadOwnSession(
   sessionId: string,
   customerId: string
 ): Promise<IntakeSession> {
@@ -178,12 +179,37 @@ export async function addCustomerMessage(
   return message;
 }
 
+// The diagnosis is shown only while the session is done; during a re-run or
+// after a failed one, the column still holds the earlier result.
 export async function getOwnSession(
   sessionId: string,
   customerId: string
-): Promise<{ session: IntakeSession; messages: IntakeMessage[] }> {
+): Promise<{
+  session: IntakeSession;
+  messages: IntakeMessage[];
+  diagnosis: Diagnosis | null;
+}> {
   const session = await loadOwnSession(sessionId, customerId);
-  return { session, messages: await listIntakeMessages(sessionId) };
+  return {
+    session,
+    messages: await listIntakeMessages(sessionId),
+    diagnosis: currentDiagnosis(session),
+  };
+}
+
+// A stored value that no longer matches the schema (e.g. an earlier prompt
+// version's shape) is logged and treated as no diagnosis.
+function currentDiagnosis(session: IntakeSession): Diagnosis | null {
+  if (session.aiStatus !== AI_STATUS.DONE) return null;
+  const stored = storedDiagnosisSchema.safeParse(session.aiDiagnosis);
+  if (!stored.success) {
+    logger.warn("stored diagnosis does not match the schema", {
+      sessionId: session.id,
+      issuePaths: stored.error.issues.map((i) => i.path.join(".")),
+    });
+    return null;
+  }
+  return stored.data.diagnosis;
 }
 
 // Readable by the session's customer, or by the provider assigned to the

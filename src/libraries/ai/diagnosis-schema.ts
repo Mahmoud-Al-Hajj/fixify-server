@@ -27,6 +27,17 @@ export const diagnosisSchema = z.object({
 
 export type Diagnosis = z.infer<typeof diagnosisSchema>;
 
+// intake_sessions.ai_diagnosis (docs/ai-plan.md §3.3). Checked again on read:
+// the column holds whatever an earlier prompt version stored.
+export const storedDiagnosisSchema = z.object({
+  model: z.string(),
+  promptVersion: z.number().int(),
+  completedAt: z.string(),
+  diagnosis: diagnosisSchema,
+});
+
+export type StoredDiagnosis = z.infer<typeof storedDiagnosisSchema>;
+
 // Sent to Gemini as the response schema. Written by hand, using only the
 // keywords in Gemini's subset; string lengths are asked for in the prompt
 // because the subset has no maxLength. diagnosis-schema.test.ts keeps it in

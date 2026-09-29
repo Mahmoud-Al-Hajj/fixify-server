@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { authenticate } from "../middlewares/authenticate";
 import { uploadPhotos } from "../middlewares/upload";
+import { analysisRateLimiter } from "../middlewares/rate-limit";
 import { validateBody, validate } from "../middlewares/validate";
 import {
   customerTurnSchema,
@@ -12,6 +13,7 @@ import {
   addCustomerMessageHandler,
   getIntakeSessionHandler,
   getIntakePhotoHandler,
+  startAnalysisHandler,
 } from "../controllers/intake";
 
 export const intakeRouter = Router();
@@ -31,6 +33,13 @@ intakeRouter.post(
   uploadPhotos,
   validateBody(customerTurnSchema),
   addCustomerMessageHandler
+);
+
+intakeRouter.post(
+  "/:id/analysis",
+  analysisRateLimiter,
+  validate("params", sessionIdParamsSchema),
+  startAnalysisHandler
 );
 
 intakeRouter.get(
