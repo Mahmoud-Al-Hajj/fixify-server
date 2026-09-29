@@ -1,4 +1,5 @@
 import type {
+  Pool,
   PoolConnection,
   ResultSetHeader,
   RowDataPacket,
@@ -126,20 +127,36 @@ export async function findIntakeSession(
 // Locks the session row for the rest of the transaction. Must be the
 // transaction's first read: InnoDB fixes its snapshot at the first plain
 // read, so a read before the lock could miss rows committed while waiting.
-// Served by the primary key.
+// aiDiagnosis is parsed but not validated, as in IntakeSession. Served by the
+// primary key.
 export async function lockIntakeSession(
   conn: PoolConnection,
   id: string
-): Promise<{ customerId: string; aiStatus: AiStatus } | null> {
+): Promise<Pick<
+  IntakeSession,
+  "customerId" | "aiStatus" | "aiDiagnosis"
+> | null> {
   const [rows] = await conn.query<
-    Array<RowDataPacket & { customer_id: string; ai_status: string }>
+    Array<
+      RowDataPacket & {
+        customer_id: string;
+        ai_status: string;
+        ai_diagnosis: string | null;
+      }
+    >
   >(
-    `SELECT customer_id, ai_status FROM intake_sessions WHERE id = ? FOR UPDATE`,
+    `SELECT customer_id, ai_status, ai_diagnosis FROM intake_sessions
+     WHERE id = ? FOR UPDATE`,
     [id]
   );
   const row = rows[0];
   return row
-    ? { customerId: row.customer_id, aiStatus: row.ai_status as AiStatus }
+    ? {
+        customerId: row.customer_id,
+        aiStatus: row.ai_status as AiStatus,
+        aiDiagnosis:
+          row.ai_diagnosis === null ? null : JSON.parse(row.ai_diagnosis),
+      }
     : null;
 }
 
@@ -167,17 +184,19 @@ export async function readSessionFreeze(
 }
 
 // The conversation in order (by id, not created_at). Served by fk_im_session
-// and fk_ip_message.
+// and fk_ip_message. Pass the transaction's connection when reading inside
+// one.
 export async function listIntakeMessages(
-  sessionId: string
+  sessionId: string,
+  db: Pool | PoolConnection = pool
 ): Promise<IntakeMessage[]> {
-  const [messages] = await pool.query<IntakeMessageRow[]>(
+  const [messages] = await db.query<IntakeMessageRow[]>(
     `SELECT id, sender, body, created_at FROM intake_messages
      WHERE session_id = ? ORDER BY id`,
     [sessionId]
   );
   if (messages.length === 0) return [];
-  const [photos] = await pool.query<IntakePhotoRow[]>(
+  const [photos] = await db.query<IntakePhotoRow[]>(
     `SELECT id, message_id, url FROM intake_photos
      WHERE message_id IN (?) ORDER BY id`,
     [messages.map((message) => message.id)]

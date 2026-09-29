@@ -30,6 +30,15 @@ export async function findCategoryIds(
   return rows.map((row) => row.id);
 }
 
+// null if no such category. Served by the primary key.
+export async function findCategoryName(id: number): Promise<string | null> {
+  const [rows] = await pool.query<CategoryRow[]>(
+    "SELECT id, name FROM categories WHERE id = ?",
+    [id]
+  );
+  return rows[0]?.name ?? null;
+}
+
 // The AI prompt and the diagnosis schemas name categories from CATEGORY_NAMES,
 // and the server resolves a name to its row, so the table must hold exactly
 // those names: none missing, none extra.

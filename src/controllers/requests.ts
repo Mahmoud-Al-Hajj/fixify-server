@@ -21,10 +21,18 @@ export async function createRequestHandler(
   res: Response
 ): Promise<void> {
   const customer = requireUser(req);
-  const request = await requestsService.createRequest({
-    customerId: customer.id,
-    ...(req.body as CreateRequestBody),
-  });
+  const body = req.body as CreateRequestBody;
+  // Only the search shape has a description (routes/requests.schema.ts).
+  const request =
+    "description" in body
+      ? await requestsService.createRequest({
+          customerId: customer.id,
+          ...body,
+        })
+      : await requestsService.createRequestFromSession({
+          customerId: customer.id,
+          ...body,
+        });
   res.status(201).json({ request });
 }
 

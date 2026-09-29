@@ -1,15 +1,16 @@
 import { z } from "zod";
 import { requireAtLeastOneField } from "./partial-update.schema";
+import { DEFAULT_VISIT_MINUTES } from "../constants/booking";
 
 // Strict, like listRequestsQuerySchema: an unsupported filter must fail loudly
 // rather than be dropped.
-// Job length for slot suggestions; 60 when the customer has no estimate.
+// Job length for slot suggestions, when the customer has no estimate.
 const durationMinutes = z
   .string()
   .regex(/^\d+$/, "Expected a whole number of minutes")
   .transform(Number)
   .pipe(z.number().int().min(15).max(1440))
-  .default(60);
+  .default(DEFAULT_VISIT_MINUTES);
 
 export const listProvidersQuerySchema = z.strictObject({
   // Parsed from the raw string rather than coerced: coercion turns a missing

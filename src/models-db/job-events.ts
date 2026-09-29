@@ -8,7 +8,7 @@ export interface InsertJobEventInput {
   eventType: JobEventType;
   // Counts are numbers. Prices stay DECIMAL strings in the audit record and
   // are never serialised as JSON numbers (which would make them floats).
-  payload: Readonly<Record<string, string | number>> | null;
+  payload: Readonly<Record<string, string | number | boolean>> | null;
 }
 
 // Append-only: job_events rows are never updated or deleted.

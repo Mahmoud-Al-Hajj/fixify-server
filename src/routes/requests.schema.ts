@@ -37,18 +37,37 @@ const localDateTime = z.string().transform((value, ctx) => {
   return z.NEVER;
 });
 
-export const createRequestSchema = z.object({
+const bookingBase = {
   providerId: z.uuid(),
   categoryId: z.number().int().positive().max(65535),
+  addressText: z.string().trim().min(1).max(300),
+  // Required: accepting a quote creates the first visit from it.
+  requestedStart: localDateTime,
+  isUrgent: z.boolean().default(false),
+};
+
+// Plain category search: the client describes the job itself. Not strict, as
+// before, but a session id must not be silently stripped: that would book
+// without the session.
+const fromSearchSchema = z.object({
+  ...bookingBase,
   serviceType: z.enum(SERVICE_TYPE).nullable().default(null),
   description: z.string().trim().min(1).max(2000),
-  addressText: z.string().trim().min(1).max(300),
-  // Both required: accepting a quote creates the first visit from them, so a
-  // request without them could be quoted but never accepted.
-  requestedStart: localDateTime,
   estimatedDurationMinutes: z.number().int().min(15).max(1440),
-  isUrgent: z.boolean().default(false),
+  intakeSessionId: z.never().optional(),
 });
+
+// Booked from an intake session: the server derives service type, duration
+// and description (docs/ai-plan.md §13), so sending any of them is a 400.
+const fromSessionSchema = z.strictObject({
+  ...bookingBase,
+  intakeSessionId: z.uuid(),
+});
+
+export const createRequestSchema = z.union([
+  fromSessionSchema,
+  fromSearchSchema,
+]);
 export type CreateRequestBody = z.infer<typeof createRequestSchema>;
 
 // Strict: an unsupported or misspelled filter must fail loudly rather than

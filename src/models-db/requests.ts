@@ -3,9 +3,10 @@ import type {
   ResultSetHeader,
   RowDataPacket,
 } from "mysql2/promise";
-import { pool } from "./pool";
+import { pool, isDbError } from "./pool";
 import { formatMysqlDateTime } from "./format-datetime";
 import type { RequestStatus } from "../constants/request-status";
+import { ConflictError, ERROR_CODE } from "../constants/errors";
 import type { ServiceType } from "../constants/service-type";
 import type { PriceStatus } from "../constants/price-status";
 
@@ -102,6 +103,7 @@ export interface InsertRequestInput {
   customerId: string;
   providerId: string;
   categoryId: number;
+  intakeSessionId: string | null;
   serviceType: ServiceType | null;
   description: string;
   addressText: string;
@@ -115,29 +117,44 @@ export interface InsertRequestInput {
   isUrgent: boolean;
 }
 
+const ONE_REQUEST_PER_SESSION_KEY = "uq_req_intake_session";
+
+// The unique key backs the booking's under-lock check: a session becomes at
+// most one request.
 export async function insertRequest(
   conn: PoolConnection,
   input: InsertRequestInput
 ): Promise<void> {
-  await conn.query(
-    `INSERT INTO requests (
-       id, customer_id, provider_id, category_id, service_type,
-       description, address_text, requested_start,
-       estimated_duration_minutes, is_urgent
-     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      input.id,
-      input.customerId,
-      input.providerId,
-      input.categoryId,
-      input.serviceType,
-      input.description,
-      input.addressText,
-      input.requestedStart,
-      input.estimatedDurationMinutes,
-      input.isUrgent,
-    ]
-  );
+  try {
+    await conn.query(
+      `INSERT INTO requests (
+         id, customer_id, provider_id, category_id, intake_session_id,
+         service_type, description, address_text, requested_start,
+         estimated_duration_minutes, is_urgent
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        input.id,
+        input.customerId,
+        input.providerId,
+        input.categoryId,
+        input.intakeSessionId,
+        input.serviceType,
+        input.description,
+        input.addressText,
+        input.requestedStart,
+        input.estimatedDurationMinutes,
+        input.isUrgent,
+      ]
+    );
+  } catch (err) {
+    if (isDbError(err, "ER_DUP_ENTRY", ONE_REQUEST_PER_SESSION_KEY)) {
+      throw new ConflictError(
+        "This problem has already been booked; describe a new one in a new session",
+        ERROR_CODE.SESSION_ALREADY_BOOKED
+      );
+    }
+    throw err;
+  }
 }
 
 const UPDATE_STATUS_SQL = `UPDATE requests

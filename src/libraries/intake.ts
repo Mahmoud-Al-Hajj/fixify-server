@@ -199,7 +199,9 @@ export async function getOwnSession(
 
 // A stored value that no longer matches the schema (e.g. an earlier prompt
 // version's shape) is logged and treated as no diagnosis.
-function currentDiagnosis(session: IntakeSession): Diagnosis | null {
+export function currentDiagnosis(
+  session: Pick<IntakeSession, "id" | "aiStatus" | "aiDiagnosis">
+): Diagnosis | null {
   if (session.aiStatus !== AI_STATUS.DONE) return null;
   const stored = storedDiagnosisSchema.safeParse(session.aiDiagnosis);
   if (!stored.success) {

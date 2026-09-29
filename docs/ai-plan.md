@@ -578,14 +578,15 @@ const bookingBase = { providerId, categoryId, addressText, requestedStart, isUrg
 const fromSearch = z.object({
   ...bookingBase,
   description: /* existing */, serviceType: /* existing */, estimatedDurationMinutes: /* existing */,
-}).strict();
+  intakeSessionId: z.never().optional(),
+}); // not strict, as before
 
 const fromSession = z.object({ ...bookingBase, intakeSessionId: z.string().uuid() }).strict();
 
 export const createRequestSchema = z.union([fromSession, fromSearch]);
 ```
 
-Sending `description`, `serviceType` or `estimatedDurationMinutes` together with `intakeSessionId` matches neither shape → 400. The search path is unchanged. Claude Code uses the existing field names and validators.
+Sending `description`, `serviceType` or `estimatedDurationMinutes` together with `intakeSessionId` matches neither shape → 400. The search path is unchanged (still not strict), except that it refuses `intakeSessionId`: otherwise a body with both would fail `fromSession`, pass `fromSearch` with the id stripped, and book without the session. Claude Code uses the existing field names and validators.
 
 ### 13.2 Derived fields: pure functions
 
@@ -613,19 +614,19 @@ export function buildDescription(customerBodies: (string | null)[]): string | nu
 }
 
 // Visit length wherever a duration is needed (slot check, quote acceptance):
-// estimatedDurationMinutes ?? DEFAULT_VISIT_MINUTES (60, the same constant B7's slot search uses)
+// estimatedDurationMinutes ?? DEFAULT_VISIT_MINUTES (60, in src/constants/booking.ts; B7's slot search default uses it too)
 ```
 
 A diagnosis with `category: null` never matches, so it takes the no-diagnosis branch without a special case.
 
 ### 13.3 Transaction order
 
-1. Before BEGIN: zod body (400), role = customer (existing 403).
+1. Before BEGIN: zod body (400), then the existing booking checks, unchanged (not your own provider, start in the future, provider exists, offers the category, is accepting), and the category name for `categoryId`. No role check: any signed-in user may book.
 2. `SELECT … FROM intake_sessions WHERE id = ? FOR UPDATE`. Not found or not this customer's → 404.
 3. A request already exists for the session → 409 `SESSION_ALREADY_BOOKED`. The unique key `uq_req_intake_session` backs it: its duplicate-key error returns the same 409.
 4. Customer messages → `buildDescription`. `null` → 400 `SESSION_HAS_NO_TEXT`.
-5. Category name for `categoryId` → `deriveBookingFields`.
-6. Existing booking steps, unchanged (category and provider checks, requested-start checks, INSERT request with `intake_session_id` set). Any duration check uses `estimatedDurationMinutes ?? 60`. No visit here.
+5. `deriveBookingFields` with the category name from step 1.
+6. INSERT request with `intake_session_id` set. Any duration check uses `estimatedDurationMinutes ?? 60`. No visit here.
 7. Parts: one multi-row INSERT into `request_items` (`source = 'ai'`, unit price NULL).
 8. INSERT `job_events` REQUEST_CREATED. COMMIT.
 
@@ -637,7 +638,7 @@ Later, at quote acceptance (existing code): the visit is created with length `CO
 
 ### 13.4 Event payload and the late label
 
-- REQUEST_CREATED payload: `{ source: "intake" | "search", intakeSessionId, aiStatusAtBooking, usedDiagnosis, partsSeeded }`. The diagnosis itself isn't copied; it lives on the session.
+- REQUEST_CREATED payload, intake path: `{ source: "intake", intakeSessionId, aiStatusAtBooking, usedDiagnosis, partsSeeded }`. The search path's payload stays `null`. The diagnosis itself isn't copied; it lives on the session.
 - The `ai_diagnosis` wrapper gets `completedAt` (Beirut wall clock), set by `markDone` (§3.3).
 - **Late = `completedAt` later than `requests.created_at`.** No new column. A changed trade shows as the diagnosis next to the request's own category.
 - The `201` response keeps today's shape. No new read endpoint.
@@ -659,7 +660,7 @@ Add-message takes `SELECT … FOR UPDATE` on the session and refuses: 409 if a r
   5. Another customer's session → 404.
   6. Photos-only session → 400 `SESSION_HAS_NO_TEXT`.
   7. Add a message after booking → 409.
-  8. Late case: session `pending`, book, then run the finish UPDATE → `done`, no parts added, card shows it as late.
+  8. Late case: session `pending`, book, then run the finish UPDATE → `done`, no parts added. (Showing it on the card as late is step 5b.)
 
 ---
 
@@ -804,12 +805,13 @@ Unchanged (`buildContent`, schema agreement, `deriveBookingFields`, `buildDescri
 
 ## 15. Implementation order
 
-Each step: estimate first, stop if > 30% **and** > 15 lines over, show the diff, show the error path working before committing.
+Steps over ~100 lines: estimate first and stop for approval, then stop again if > 30% **and** > 15 lines over. Every step: show the diff and the error path working before committing.
 
 1. **Constants + schemas + prompt + `gemini.ts` + replay script + fixtures** → runs A–D, tune the prompt, fix the model settings. Needs no migration or locks. If the free model isn't good enough, this is where we find out.
 2. Migration 004 (`analysis_attempts`) + categories startup check.
 3. Session lock + freeze 409s + 20-photo cap.
 4. Analysis endpoint, background run, startup sweep, rate limiter (one JSON 429 handler shared with `authRateLimiter`).
 5. B8 booking from a session + `COALESCE` in the quote-accept step.
+5b. Issue card: the session's diagnosis and the late label ("AI suggestion, arrived after booking", §7). Late = `ai_diagnosis.completedAt` later than `requests.created_at`, compared as parsed wall-clock times (`wallClockToDate`), not as strings.
 6. Districts list + `providers.area` cleanup.
 7. Client screens.

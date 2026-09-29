@@ -8,6 +8,7 @@ import {
 } from "../models-db/requests";
 import { insertVisit, hasOverlappingVisit } from "../models-db/visits";
 import { lockProviderForUpdate } from "../models-db/providers";
+import { DEFAULT_VISIT_MINUTES } from "../constants/booking";
 import { insertJobEvent } from "../models-db/job-events";
 import { wallClockToDate, beirutNow } from "../models-db/format-datetime";
 import { JOB_EVENT_TYPE } from "../constants/job-event-type";
@@ -285,12 +286,9 @@ export async function acceptQuote(
   // state machine stays authoritative even if the quote rules change.
   assertRequestTransition(request.status, REQUEST_STATUS.SCHEDULED, actorRole);
 
-  if (
-    request.requestedStart === null ||
-    request.estimatedDurationMinutes === null
-  ) {
+  if (request.requestedStart === null) {
     throw new ConflictError(
-      "Both requestedStart and estimatedDurationMinutes must be set on the request before a quote can be accepted"
+      "requestedStart must be set on the request before a quote can be accepted"
     );
   }
   const price = request.price;
@@ -304,8 +302,12 @@ export async function acceptQuote(
       "The requested start time has passed; cancel this request and book a new time"
     );
   }
+  // COALESCE(estimated_duration_minutes, 60): a job nobody estimated gets the
+  // default visit length.
+  const visitMinutes =
+    request.estimatedDurationMinutes ?? DEFAULT_VISIT_MINUTES;
   const scheduledEnd = new Date(
-    scheduledStart.getTime() + request.estimatedDurationMinutes * 60_000
+    scheduledStart.getTime() + visitMinutes * 60_000
   );
 
   await withTransaction(async (conn) => {

@@ -290,8 +290,10 @@ Output what you found. Not a plan yet.
 - Whether it calls the AI module, which of the two calls, and what happens when it fails.
 - Any assumption, stated explicitly.
 
-**Then stop and wait for confirmation.** A plan followed immediately by an implementation
-in the same turn has skipped the gate and is wrong regardless of code quality.
+**For a step over ~100 lines, then stop and wait for confirmation.** For such a step, a
+plan followed immediately by an implementation in the same turn has skipped the gate and
+is wrong regardless of code quality. Smaller changes go on to Phase 3 without stopping
+(see "Working rules").
 
 ### Phase 3 — Implement
 
@@ -562,8 +564,9 @@ Rules, all load-bearing:
   session row; the visit and the provider lock stay at quote acceptance. Visit length at
   quote acceptance = `COALESCE(estimated_duration_minutes, 60)` (`DEFAULT_VISIT_MINUTES`);
   `estimated_duration_minutes` stays `NULL` when not estimated. `deriveBookingFields` and
-  `buildDescription` are pure functions. The `REQUEST_CREATED` payload is
-  `{ source, intakeSessionId, aiStatusAtBooking, usedDiagnosis, partsSeeded }`.
+  `buildDescription` are pure functions. An intake booking's `REQUEST_CREATED` payload is
+  `{ source, intakeSessionId, aiStatusAtBooking, usedDiagnosis, partsSeeded }`; a search
+  booking's stays `null`.
 
 ### Provider matching is not an AI call
 
@@ -757,6 +760,19 @@ in Phase 1 — do not silently fix it as a side effect of another task:
 - [ ] No `any`, no `console.log`, no dead or commented-out code
 - [ ] Actually exercised with a real request, not only type-checked
 - [ ] What was not verified is stated explicitly
+
+---
+
+## Working rules
+
+- Prompt and model work is frozen: no prompt changes or replay runs unless something breaks.
+- `docs/ai-plan.md` is the only plan. Doc fixes ride along with the next feature commit;
+  no docs-only commits.
+- Estimate and stop for approval only for steps over ~100 lines. Smaller changes: build,
+  show the diff, commit.
+- Before claiming something exists or is done, prove it in the report with quoted output:
+  `git show --stat`, a grep, or test output.
+- Don't assume. If the code or the plan doesn't settle something, ask before building it.
 
 ---
 

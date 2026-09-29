@@ -26,7 +26,13 @@ import {
 import { insertJobEvent } from "../models-db/job-events";
 import { beirutNow } from "../models-db/format-datetime";
 import { findReviewForRequest } from "../models-db/reviews";
-import { listIntakeMessages, type IntakeMessage } from "../models-db/intake";
+import {
+  listIntakeMessages,
+  lockIntakeSession,
+  readSessionFreeze,
+  type IntakeMessage,
+} from "../models-db/intake";
+import { findCategoryName } from "../models-db/categories";
 import {
   listRequestItems,
   insertRequestItems,
@@ -35,6 +41,8 @@ import {
   type RequestItem,
 } from "../models-db/request-items";
 import { ITEM_SOURCE } from "../constants/item-source";
+import { MESSAGE_SENDER } from "../constants/message-sender";
+import { BOOKING_SOURCE } from "../constants/booking";
 import {
   VISIT_STATUS,
   OPEN_VISIT_STATUSES,
@@ -53,8 +61,11 @@ import {
   ForbiddenError,
   ValidationError,
   ConflictError,
+  ERROR_CODE,
 } from "../constants/errors";
 import { assertRequestTransition } from "./request-state-machine";
+import { currentDiagnosis } from "./intake";
+import { buildDescription, deriveBookingFields } from "./booking-from-session";
 
 // A request this service just wrote; missing only if deleted concurrently,
 // which no endpoint does.
@@ -66,11 +77,19 @@ export async function rereadRequest(id: string): Promise<Request> {
   return request;
 }
 
-export type CreateRequestInput = Omit<InsertRequestInput, "id">;
+export type CreateRequestInput = Omit<
+  InsertRequestInput,
+  "id" | "intakeSessionId"
+>;
 
-export async function createRequest(
-  input: CreateRequestInput
-): Promise<Request> {
+// The checks every booking runs before its transaction, whichever path it
+// came through.
+async function assertBookable(
+  input: Pick<
+    CreateRequestInput,
+    "customerId" | "providerId" | "categoryId" | "requestedStart"
+  >
+): Promise<void> {
   if (input.customerId === input.providerId) {
     throw new ValidationError("You cannot request service from yourself");
   }
@@ -99,17 +118,112 @@ export async function createRequest(
       "This provider is not currently accepting requests"
     );
   }
+}
 
+export async function createRequest(
+  input: CreateRequestInput
+): Promise<Request> {
+  await assertBookable(input);
   const id = randomUUID();
 
   await withTransaction(async (conn) => {
-    await insertRequest(conn, { id, ...input });
+    await insertRequest(conn, { id, ...input, intakeSessionId: null });
     await insertJobEvent(conn, {
       id: randomUUID(),
       requestId: id,
       actorUserId: input.customerId,
       eventType: JOB_EVENT_TYPE.REQUEST_CREATED,
       payload: null,
+    });
+  });
+
+  return rereadRequest(id);
+}
+
+export type BookFromSessionInput = Pick<
+  CreateRequestInput,
+  | "customerId"
+  | "providerId"
+  | "categoryId"
+  | "addressText"
+  | "requestedStart"
+  | "isUrgent"
+> & { intakeSessionId: string };
+
+// docs/ai-plan.md §13.3. The session lock is the transaction's first read, so
+// a message or booking committed while waiting is seen. The service type,
+// duration, description and parts come from the session, not the client.
+export async function createRequestFromSession(
+  input: BookFromSessionInput
+): Promise<Request> {
+  await assertBookable(input);
+  const categoryName = await findCategoryName(input.categoryId);
+  if (categoryName === null) {
+    throw new Error("A category the provider offers could not be read");
+  }
+  const id = randomUUID();
+
+  await withTransaction(async (conn) => {
+    const session = await lockIntakeSession(conn, input.intakeSessionId);
+    if (!session || session.customerId !== input.customerId) {
+      throw new NotFoundError("Intake session not found");
+    }
+    if ((await readSessionFreeze(conn, input.intakeSessionId)).booked) {
+      throw new ConflictError(
+        "This problem has already been booked; describe a new one in a new session",
+        ERROR_CODE.SESSION_ALREADY_BOOKED
+      );
+    }
+    const messages = await listIntakeMessages(input.intakeSessionId, conn);
+    const description = buildDescription(
+      messages
+        .filter((message) => message.sender === MESSAGE_SENDER.CUSTOMER)
+        .map((message) => message.body)
+    );
+    if (description === null) {
+      throw new ValidationError(
+        "Describe the problem in words before booking",
+        ERROR_CODE.SESSION_HAS_NO_TEXT
+      );
+    }
+    const derived = deriveBookingFields(
+      {
+        aiStatus: session.aiStatus,
+        diagnosis: currentDiagnosis({ id: input.intakeSessionId, ...session }),
+      },
+      categoryName
+    );
+    await insertRequest(conn, {
+      ...input,
+      id,
+      serviceType: derived.serviceType,
+      description,
+      estimatedDurationMinutes: derived.estimatedDurationMinutes,
+    });
+    await insertRequestItems(
+      conn,
+      id,
+      derived.parts.map((part) => ({
+        id: randomUUID(),
+        name: part.name,
+        quantity: part.quantity,
+        unit: part.unit,
+        estimatedUnitPrice: null,
+        source: ITEM_SOURCE.AI,
+      }))
+    );
+    await insertJobEvent(conn, {
+      id: randomUUID(),
+      requestId: id,
+      actorUserId: input.customerId,
+      eventType: JOB_EVENT_TYPE.REQUEST_CREATED,
+      payload: {
+        source: BOOKING_SOURCE.INTAKE,
+        intakeSessionId: input.intakeSessionId,
+        aiStatusAtBooking: session.aiStatus,
+        usedDiagnosis: derived.usedDiagnosis,
+        partsSeeded: derived.parts.length,
+      },
     });
   });
 
