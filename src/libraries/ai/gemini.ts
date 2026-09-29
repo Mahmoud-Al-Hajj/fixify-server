@@ -13,20 +13,15 @@ import {
   diagnosisSchema,
   type Diagnosis,
 } from "./diagnosis-schema";
+import {
+  DIAGNOSIS_FAILURE,
+  DiagnosisError,
+  type DiagnosisFailureDetails,
+  type TokenUsage,
+} from "./diagnosis-failure";
 
 // The only file that knows about Gemini: one Interactions call, then
-// JSON.parse and zod. Retries and the timeout belong to the caller.
-
-export const DIAGNOSIS_FAILURE = {
-  RATE_LIMITED: "rate_limited",
-  PROVIDER_ERROR: "provider_error",
-  BAD_REQUEST: "bad_request",
-  BLOCKED: "blocked",
-  INVALID_OUTPUT: "invalid_output",
-} as const;
-
-export type DiagnosisFailureKind =
-  (typeof DIAGNOSIS_FAILURE)[keyof typeof DIAGNOSIS_FAILURE];
+// JSON.parse and zod. The hedge and the timeout belong to the caller.
 
 export const THINKING_LEVELS = ["minimal", "low", "medium", "high"] as const;
 
@@ -42,17 +37,12 @@ export interface DiagnosisInput {
   photos: PromptPhoto[];
 }
 
-// Production passes none; the replay script uses them to compare settings.
+// Production passes only the model (the hedge's fallback); the replay script
+// uses the rest to compare settings.
 export interface DiagnoseOverrides {
   model?: string;
   thinkingLevel?: ThinkingLevel;
   maxOutputTokens?: number;
-}
-
-export interface TokenUsage {
-  input: number | null;
-  output: number | null;
-  thinking: number | null;
 }
 
 export interface DiagnosisResult {
@@ -61,26 +51,6 @@ export interface DiagnosisResult {
   outputText: string;
   interactionStatus: string;
   usage: TokenUsage;
-}
-
-export interface DiagnosisFailureDetails {
-  httpStatus?: number;
-  interactionStatus?: string;
-  outputText?: string;
-  usage?: TokenUsage;
-  issuePaths?: string[];
-}
-
-export class DiagnosisError extends Error {
-  constructor(
-    readonly kind: DiagnosisFailureKind,
-    message: string,
-    readonly details: DiagnosisFailureDetails = {},
-    options?: { cause: unknown }
-  ) {
-    super(message, options);
-    this.name = "DiagnosisError";
-  }
 }
 
 // One client for the process. The promise is cached, not the client, so
@@ -94,9 +64,13 @@ async function createClient(apiKey: string): Promise<GoogleGenAI> {
   return new sdk.GoogleGenAI({ apiKey });
 }
 
+// `signal` aborts the call (the hedge's other attempt won, or the time ran
+// out); the aborted call rejects with the SDK's own error, not a
+// DiagnosisError.
 export async function diagnose(
   input: DiagnosisInput,
-  overrides: DiagnoseOverrides = {}
+  overrides: DiagnoseOverrides = {},
+  signal?: AbortSignal
 ): Promise<DiagnosisResult> {
   if (!env.gemini) {
     throw new Error(
@@ -126,9 +100,9 @@ export async function diagnose(
         },
         store: false,
       },
-      // The SDK retries 429 and 5xx by default; §12.2 allows no retry on 429,
-      // and our own single retry is added by the caller (intake-analysis.ts).
-      { retries: { strategy: "none" } }
+      // The SDK retries 429 and 5xx by default; §12.2 allows none: the
+      // caller hedges to the fallback model instead (hedged-diagnose.ts).
+      { retries: { strategy: "none" }, signal }
     );
   } catch (err) {
     throw classifyCallError(err);
@@ -190,8 +164,10 @@ export async function diagnose(
 }
 
 // The SDK's error classes are not exported, so errors are recognised by their
-// numeric status, and connection failures by name. Anything else (including
-// an abort) is rethrown untouched for the caller to treat as a crash.
+// numeric status, and connection failures by name. Only 400 means our request
+// or schema is wrong, which the fallback model would repeat; other 4xx (e.g.
+// an unknown model name) are provider errors, so the hedge tries the fallback.
+// Anything else (including an abort) is rethrown untouched for the caller.
 function classifyCallError(err: unknown): unknown {
   if (!(err instanceof Error)) return err;
   if ("status" in err && typeof err.status === "number") {
@@ -199,7 +175,7 @@ function classifyCallError(err: unknown): unknown {
     const kind =
       httpStatus === 429
         ? DIAGNOSIS_FAILURE.RATE_LIMITED
-        : httpStatus >= 400 && httpStatus < 500
+        : httpStatus === 400
           ? DIAGNOSIS_FAILURE.BAD_REQUEST
           : DIAGNOSIS_FAILURE.PROVIDER_ERROR;
     return new DiagnosisError(

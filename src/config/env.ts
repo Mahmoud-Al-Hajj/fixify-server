@@ -28,12 +28,18 @@ function intWithDefault(name: string, fallback: number): number {
   return parsed;
 }
 
-// AI is optional: enabled only when both variables are set, with no default
-// model. null means the intake diagnosis is unavailable.
-function gemini(): { apiKey: string; model: string } | null {
+// AI is optional: enabled only when both GEMINI_API_KEY and GEMINI_MODEL are
+// set, with no default model. null means the intake diagnosis is unavailable.
+// GEMINI_FALLBACK_MODEL is optional; without it the analysis does not hedge.
+function gemini(): {
+  apiKey: string;
+  model: string;
+  fallbackModel: string | null;
+} | null {
   const apiKey = process.env.GEMINI_API_KEY?.trim();
   const model = process.env.GEMINI_MODEL?.trim();
-  return apiKey && model ? { apiKey, model } : null;
+  const fallbackModel = process.env.GEMINI_FALLBACK_MODEL?.trim() || null;
+  return apiKey && model ? { apiKey, model, fallbackModel } : null;
 }
 
 export const env = {

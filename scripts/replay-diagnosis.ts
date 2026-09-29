@@ -28,16 +28,18 @@ import {
 import type { Diagnosis } from "../src/libraries/ai/diagnosis-schema";
 import {
   diagnose,
-  DIAGNOSIS_FAILURE,
-  DiagnosisError,
   THINKING_LEVELS,
   DEFAULT_THINKING_LEVEL,
   DEFAULT_MAX_OUTPUT_TOKENS,
   type DiagnoseOverrides,
-  type DiagnosisFailureDetails,
   type DiagnosisInput,
-  type TokenUsage,
 } from "../src/libraries/ai/gemini";
+import {
+  DIAGNOSIS_FAILURE,
+  DiagnosisError,
+  type DiagnosisFailureDetails,
+  type TokenUsage,
+} from "../src/libraries/ai/diagnosis-failure";
 import { CASES, type DiagnosisCase } from "../fixtures/diagnosis/cases";
 
 const DEFAULT_PAUSE_SECONDS = 13;
