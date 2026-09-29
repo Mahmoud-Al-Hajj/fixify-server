@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { z } from "zod";
 import { DIAGNOSIS_JSON_SCHEMA, diagnosisSchema } from "./diagnosis-schema";
 
@@ -53,4 +55,17 @@ test("DIAGNOSIS_JSON_SCHEMA agrees with diagnosisSchema", () => {
 test("every field is required in the JSON Schema", () => {
   const shape = shapeOf(DIAGNOSIS_JSON_SCHEMA);
   assert.deepEqual(shape.required, Object.keys(shape.fields).sort());
+});
+
+// One raw model output (JSON.parse of the text, before zod) saved from a 3.1
+// Flash-Lite replay run: catches a zod change that would reject real output.
+test("diagnosisSchema accepts a real Gemini response", () => {
+  const raw: unknown = JSON.parse(
+    readFileSync(
+      path.join(__dirname, "../../../fixtures/diagnosis/sample-response.json"),
+      "utf8"
+    )
+  );
+  const result = diagnosisSchema.safeParse(raw);
+  if (!result.success) assert.fail(result.error.message);
 });

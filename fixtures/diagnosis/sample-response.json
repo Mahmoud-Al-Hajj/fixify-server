@@ -1,0 +1,27 @@
+{
+  "title": "Leaking P-trap under the kitchen sink",
+  "confidence": "high",
+  "category": "Plumber",
+  "serviceType": "repair",
+  "durationMinutes": 60,
+  "explanation": "It looks like the P-trap drain pipe under your sink has a loose connection or a cracked seal, causing the water to leak. A plumber will inspect the pipe joints, tighten them, or replace the P-trap if it is damaged. In the meantime, please place a bucket under the leak to catch the water and avoid using the kitchen sink until it is repaired.",
+  "isUrgent": true,
+  "safetyNote": null,
+  "suggestedParts": [
+    {
+      "name": "PVC P-trap kit",
+      "quantity": 1,
+      "unit": null
+    },
+    {
+      "name": "Plumber's tape",
+      "quantity": 1,
+      "unit": null
+    },
+    {
+      "name": "PVC primer and cement",
+      "quantity": 1,
+      "unit": null
+    }
+  ]
+}
