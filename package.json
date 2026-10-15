@@ -12,7 +12,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "tsc --noEmit && tsc -p tsconfig.scripts.json && prettier --check .",
-    "replay": "tsx scripts/replay-diagnosis.ts"
+    "replay": "tsx scripts/replay-diagnosis.ts",
+    "smoke": "tsx scripts/smoke.ts"
   },
   "keywords": [],
   "author": "",

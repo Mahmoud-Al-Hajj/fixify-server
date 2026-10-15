@@ -643,7 +643,9 @@ so only test photos go through it — never real customer photos.
 ### Testing the diagnosis with real photos
 
 - Live Gemini calls run only in `scripts/replay-diagnosis.ts` (`npm run replay`), never
-  in `npm test` or CI.
+  in `npm test` or CI. The one exception is `npm run smoke -- --live-ai`
+  (`scripts/smoke.ts`, one analysis of a committed test photo), run only when the user
+  asks for it; the default smoke run has AI off.
 - The replay goes through the production path from `buildContent` onward:
   `buildContent` → `diagnose()` → `JSON.parse` → zod. Only the DB and HTTP are skipped.
 - `fixtures/diagnosis/runs/` is gitignored and may hold raw model output. It is fixture
