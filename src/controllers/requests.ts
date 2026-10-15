@@ -191,21 +191,20 @@ export async function createReviewHandler(
   res.status(201).json({ review });
 }
 
-// The diagnosis stays null until the intake-diagnosis AI step exists.
 export async function getIssueCardHandler(
   req: Request,
   res: Response<unknown, ParamsLocals<RequestIdParams>>
 ): Promise<void> {
   const user = requireUser(req);
-  const { request, messages, items } = await requestsService.getIssueCard(
-    res.locals.params.id,
-    user.id
-  );
+  const { request, aiStatus, diagnosis, isLate, messages, items } =
+    await requestsService.getIssueCard(res.locals.params.id, user.id);
   const sessionId = request.intakeSessionId;
   res.status(200).json({
     issueCard: {
       request,
-      diagnosis: null,
+      aiStatus,
+      diagnosis,
+      isLate,
       messages: sessionId
         ? messages.map((message) => toMessageView(sessionId, message))
         : [],

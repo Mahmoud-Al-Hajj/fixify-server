@@ -15,6 +15,7 @@ import {
   type IntakeSession,
   type IntakeMessage,
 } from "../models-db/intake";
+import { findCategoryIdByName } from "../models-db/categories";
 import { MESSAGE_SENDER } from "../constants/message-sender";
 import { AI_STATUS } from "../constants/ai-status";
 import {
@@ -187,14 +188,32 @@ export async function getOwnSession(
 ): Promise<{
   session: IntakeSession;
   messages: IntakeMessage[];
-  diagnosis: Diagnosis | null;
+  diagnosis: DiagnosisView | null;
 }> {
   const session = await loadOwnSession(sessionId, customerId);
+  const diagnosis = currentDiagnosis(session);
   return {
     session,
     messages: await listIntakeMessages(sessionId),
-    diagnosis: currentDiagnosis(session),
+    diagnosis: diagnosis === null ? null : await toDiagnosisView(diagnosis),
   };
+}
+
+// The diagnosis as the API returns it: the validated output, never edited,
+// plus the id of its category, resolved by the server from the name so the
+// client never maps names to ids. Response only; nothing stores it.
+export type DiagnosisView = Diagnosis & { categoryId: number | null };
+
+export async function toDiagnosisView(
+  diagnosis: Diagnosis
+): Promise<DiagnosisView> {
+  if (diagnosis.category === null) return { ...diagnosis, categoryId: null };
+  const categoryId = await findCategoryIdByName(diagnosis.category);
+  if (categoryId === null) {
+    // assertCategoriesMatchConstants guarantees a row for every name.
+    throw new Error("A diagnosed category has no row in categories");
+  }
+  return { ...diagnosis, categoryId };
 }
 
 // A stored value that no longer matches the schema (e.g. an earlier prompt

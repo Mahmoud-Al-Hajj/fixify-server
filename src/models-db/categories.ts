@@ -39,6 +39,17 @@ export async function findCategoryName(id: number): Promise<string | null> {
   return rows[0]?.name ?? null;
 }
 
+// null if no such category. Served by uq_categories_name.
+export async function findCategoryIdByName(
+  name: string
+): Promise<number | null> {
+  const [rows] = await pool.query<CategoryRow[]>(
+    "SELECT id, name FROM categories WHERE name = ?",
+    [name]
+  );
+  return rows[0]?.id ?? null;
+}
+
 // The AI prompt and the diagnosis schemas name categories from CATEGORY_NAMES,
 // and the server resolves a name to its row, so the table must hold exactly
 // those names: none missing, none extra.

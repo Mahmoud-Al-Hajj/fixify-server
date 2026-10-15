@@ -100,8 +100,9 @@ upload into `request_photos`, and never add a `kind` for it.
 The issue card is a read model, not a table. It is what an assigned provider sees for a
 request: the request's confirmed description and diagnosis, the intake conversation and
 its photos (reached through `requests.intake_session_id`), and the current
-`request_items`. A provider can read an intake session only through a request assigned to
-them — never directly by session id.
+`request_items`. The diagnosis carries `categoryId` (resolved by the server) and the card
+says `isLate` when it arrived after booking. A provider can read an intake session only
+through a request assigned to them — never directly by session id.
 
 ### Booking flow
 
@@ -562,8 +563,9 @@ Rules, all load-bearing:
 
   `description` is the customer's messages in order, joined by blank lines, cut to 2,000
   characters. A diagnosis that finishes after booking is stored on the session only: it
-  never seeds parts or changes the request. Late means `ai_diagnosis.completedAt` is
-  later than `requests.created_at`; there is no column for it.
+  never seeds parts or changes the request. Late means the REQUEST_CREATED payload's
+  `aiStatusAtBooking` is `pending` and the session's `ai_status` is now `done`; there is
+  no column for it.
 
   The `POST /requests` body is a union of two strict shapes: search (`description`,
   `serviceType`, `estimatedDurationMinutes`) or session (`intakeSessionId`). Sending any

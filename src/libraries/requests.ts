@@ -24,10 +24,11 @@ import {
   cancelOpenVisitsForRequest,
   type Visit,
 } from "../models-db/visits";
-import { insertJobEvent } from "../models-db/job-events";
+import { insertJobEvent, findAiStatusAtBooking } from "../models-db/job-events";
 import { beirutNow } from "../models-db/format-datetime";
 import { findReviewForRequest } from "../models-db/reviews";
 import {
+  findIntakeSession,
   listIntakeMessages,
   lockIntakeSession,
   readSessionFreeze,
@@ -42,6 +43,7 @@ import {
   type RequestItem,
 } from "../models-db/request-items";
 import { ITEM_SOURCE } from "../constants/item-source";
+import { AI_STATUS, type AiStatus } from "../constants/ai-status";
 import { MESSAGE_SENDER } from "../constants/message-sender";
 import { BOOKING_SOURCE } from "../constants/booking";
 import {
@@ -65,7 +67,11 @@ import {
   ERROR_CODE,
 } from "../constants/errors";
 import { assertRequestTransition } from "./request-state-machine";
-import { currentDiagnosis } from "./intake";
+import {
+  currentDiagnosis,
+  toDiagnosisView,
+  type DiagnosisView,
+} from "./intake";
 import { buildDescription, deriveBookingFields } from "./booking-from-session";
 
 // A request this service just wrote; missing only if deleted concurrently,
@@ -270,16 +276,25 @@ export async function getRequestForActor(
   return { request, visits, hasReview: review !== null };
 }
 
+export interface IssueCard {
+  request: Request;
+  // null for a request booked through search, which has no session.
+  aiStatus: AiStatus | null;
+  diagnosis: DiagnosisView | null;
+  isLate: boolean;
+  messages: IntakeMessage[];
+  items: RequestItem[];
+}
+
 // What the assigned provider reads for a job: the request, the customer's
-// intake conversation (reached only through the request), and the parts list.
+// intake conversation and its diagnosis (reached only through the request),
+// and the parts list. Late = the analysis was still pending at booking and is
+// done now; sessions are frozen after booking, so nothing else can make it
+// done later.
 export async function getIssueCard(
   requestId: string,
   actorUserId: string
-): Promise<{
-  request: Request;
-  messages: IntakeMessage[];
-  items: RequestItem[];
-}> {
+): Promise<IssueCard> {
   const { request, actorRole } = await loadRequestForActor(
     requestId,
     actorUserId
@@ -289,10 +304,32 @@ export async function getIssueCard(
       "Only the assigned provider can open the issue card"
     );
   }
-  const messages = request.intakeSessionId
-    ? await listIntakeMessages(request.intakeSessionId)
-    : [];
-  return { request, messages, items: await listRequestItems(request.id) };
+  const items = await listRequestItems(request.id);
+  if (request.intakeSessionId === null) {
+    return {
+      request,
+      aiStatus: null,
+      diagnosis: null,
+      isLate: false,
+      messages: [],
+      items,
+    };
+  }
+  const session = await findIntakeSession(request.intakeSessionId);
+  if (!session) {
+    throw new Error("A request's intake session could not be read");
+  }
+  const diagnosis = currentDiagnosis(session);
+  return {
+    request,
+    aiStatus: session.aiStatus,
+    diagnosis: diagnosis === null ? null : await toDiagnosisView(diagnosis),
+    isLate:
+      diagnosis !== null &&
+      (await findAiStatusAtBooking(request.id)) === AI_STATUS.PENDING,
+    messages: await listIntakeMessages(session.id),
+    items,
+  };
 }
 
 export type RequestItemInput = Omit<RequestItem, "id" | "source"> & {

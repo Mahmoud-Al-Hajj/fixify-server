@@ -214,7 +214,7 @@ export type Diagnosis = z.infer<typeof diagnosisSchema>;
   ```json
   { "model": "<the model that answered, after the hedge>", "promptVersion": <PROMPT_VERSION, now 4>, "completedAt": "<Beirut wall clock>", "diagnosis": { } }
   ```
-  The stored diagnosis is the model's output after validation. Values are never edited. `completedAt` is set by `markDone` and decides whether a diagnosis was late (§13.4).
+  The stored diagnosis is the model's output after validation. Values are never edited. `completedAt` is set by `markDone`; it is an audit field and no longer decides lateness (§13.4).
 - On failure `ai_diagnosis` is left unchanged (`NULL` on a first attempt, the previous diagnosis after a failed re-run); GET and booking use it only when `ai_status` is `done`. The raw output goes to the winston log. (The JSON column would reject invalid output anyway.)
 - **A successful re-run overwrites `ai_diagnosis`.** Earlier runs survive only as their AI messages (the explanation text).
 
@@ -426,7 +426,7 @@ Whether the SDK can cancel a call halfway doesn't matter. If the timeout fires, 
   | trade changed, or diagnosis `none` / `pending` / `failed` / category `null` | `NULL` | `NULL` | 60 (`COALESCE`) | none |
 
 - `description` = the customer's messages joined in order with blank lines between them, cut to 2,000 characters. (This is the customer's original text, in their own language.)
-- **A late diagnosis** (finishes after booking) is stored on the session and shown on the issue card, labelled "AI suggestion, arrived after booking". It **doesn't** seed parts or change the request. Late = `ai_diagnosis.completedAt` later than `requests.created_at`.
+- **A late diagnosis** (finishes after booking) is stored on the session and shown on the issue card, labelled "AI suggestion, arrived after booking". It **doesn't** seed parts or change the request. Late = the REQUEST_CREATED payload's `aiStatusAtBooking` is `pending` and the session's `ai_status` is now `done` (§13.4).
 - Everything happens in one transaction: request, parts, REQUEST_CREATED event. The visit is created later, when the customer accepts the quote, as today; its length is `COALESCE(estimated_duration_minutes, 60)`. The session row is locked `FOR UPDATE` (§2.7). Body, transaction order, event payload and tests: §13.
 
 ---
@@ -640,7 +640,8 @@ Later, at quote acceptance (existing code): the visit is created with length `CO
 
 - REQUEST_CREATED payload, intake path: `{ source: "intake", intakeSessionId, aiStatusAtBooking, usedDiagnosis, partsSeeded }`. The search path's payload stays `null`. The diagnosis itself isn't copied; it lives on the session.
 - The `ai_diagnosis` wrapper gets `completedAt` (Beirut wall clock), set by `markDone` (§3.3).
-- **Late = `completedAt` later than `requests.created_at`.** No new column. A changed trade shows as the diagnosis next to the request's own category.
+- **Late = the REQUEST_CREATED payload's `aiStatusAtBooking` is `pending` and the session's `ai_status` is now `done`.** Exact, because a session is frozen after booking: only an analysis already running can still settle it. No new column. A changed trade shows as the diagnosis next to the request's own category (the issue card returns `diagnosis.categoryId`).
+- `completedAt` vs `requests.created_at` was dropped as the late rule: `completedAt` has whole-second precision and comes from the Node clock, `created_at` from MySQL's clock (they may differ by up to 2 minutes).
 - The `201` response keeps today's shape. No new read endpoint.
 
 ### 13.5 Freeze rule and photo cap: built in B8
@@ -812,6 +813,6 @@ Steps over ~100 lines: estimate first and stop for approval, then stop again if 
 3. Session lock + freeze 409s + 20-photo cap.
 4. Analysis endpoint, background run, startup sweep, rate limiter (one JSON 429 handler shared with `authRateLimiter`).
 5. B8 booking from a session + `COALESCE` in the quote-accept step.
-5b. Issue card: the session's diagnosis and the late label ("AI suggestion, arrived after booking", §7). Late = `ai_diagnosis.completedAt` later than `requests.created_at`, compared as parsed wall-clock times (`wallClockToDate`), not as strings.
+5b. Issue card: the session's diagnosis and the late label ("AI suggestion, arrived after booking", §7). Late = `aiStatusAtBooking` `pending` in the REQUEST_CREATED payload and `ai_status` now `done` (§13.4).
 6. Districts list + `providers.area` cleanup.
 7. Client screens.
