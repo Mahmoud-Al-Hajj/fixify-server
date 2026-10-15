@@ -4,6 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "tsc": "tsc",
     "dev": "tsx watch src/server.ts",
     "watch": "tsc --noEmit --watch",
     "build": "tsc",
