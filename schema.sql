@@ -301,7 +301,10 @@ ALTER TABLE visits
   ADD CONSTRAINT chk_visits_status CHECK (status IN
     ('scheduled','en_route','in_progress','done','cancelled')),
   ADD CONSTRAINT chk_visits_window
-    CHECK (scheduled_end > scheduled_start);
+    CHECK (scheduled_end > scheduled_start),
+  ADD CONSTRAINT chk_visits_proposal CHECK (
+    (proposed_start IS NULL) = (proposed_by IS NULL) AND
+    (proposed_start IS NULL OR status = 'scheduled'));
 
 ALTER TABLE provider_availability
   ADD CONSTRAINT chk_avail_weekday CHECK (weekday BETWEEN 0 AND 6),

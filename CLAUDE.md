@@ -162,7 +162,17 @@ becomes NULL).
 
 A reschedule updates the visit row in place (`proposed_start` / `proposed_by`, then
 confirmed by the other party). There is no `rescheduled` status — the history lives in
-`job_events`.
+`job_events`. Either party proposes a new start for a `scheduled` visit while the job is
+`scheduled` or `in_progress`; the other accepts or declines; the proposer can withdraw.
+One open proposal per visit (`chk_visits_proposal`, migration 006, which also limits it
+to `scheduled` visits; starting or cancelling a visit clears it). A customer's time must
+fit the provider's working hours (`fitsWorkingHours`); the provider's need not. Accepting
+keeps the visit's length, refuses a time that has passed (409), and runs the same
+`reserveSlot` as quote acceptance. The rules are `assertRescheduleAction`
+(`libraries/visit-rules.ts`).
+
+Visits are the source of truth for appointment times. `requests.requested_start` keeps the
+time chosen at booking and is not updated when the first visit is rescheduled.
 
 Every transition, on both request and visit, is validated server-side against the current
 persisted state. The client's claim about current state is never trusted.
@@ -422,11 +432,12 @@ its `intake_photos` rows commit together.
 
 Two layers, both required:
 
-1. **Overlap check under a lock.** Inside the accept-quote transaction, the first
-   statement is `SELECT … FROM providers WHERE id = ? FOR UPDATE`
+1. **Overlap check under a lock.** Inside the accept-quote and accept-reschedule
+   transactions, the first statement is `SELECT … FROM providers WHERE id = ? FOR UPDATE`
    (`lockProviderForUpdate`). Only then does the service check for an open visit of that
-   provider whose `[scheduled_start, scheduled_end)` overlaps the new one, and insert
-   the visit. Every booking for a provider takes the same lock first, so the check
+   provider whose `[scheduled_start, scheduled_end)` overlaps the new one (a visit being
+   moved is excluded), and insert or move the visit. Both go through `reserveSlot`
+   (`libraries/visits.ts`). Every booking for a provider takes the same lock first, so the check
    cannot race. The lock must be the transaction's first read: InnoDB takes the
    consistent-read snapshot at the first plain read, so a read before the lock could
    miss a visit committed while waiting. An overlap maps to a `ConflictError`. This is
@@ -726,9 +737,10 @@ Every line written ships as-is.
 Seed scripts are the one exception, and only under `scripts/`, never reachable from a
 route. Demo data for the presentation belongs there.
 
-The request state machine and the quote rules (`libraries/quote-rules.ts`) are expected
-to have unit tests, and so are slot generation
-(`libraries/slot-rules.ts`) and the booking-from-session derivations
+The request state machine, the quote rules (`libraries/quote-rules.ts`) and the
+reschedule rules (`libraries/visit-rules.ts`) are expected to have unit tests, and so are
+slot generation and `fitsWorkingHours` (`libraries/slot-rules.ts`) and the
+booking-from-session derivations
 (`deriveBookingFields`, `buildDescription`). Other test suites are added on request, not
 by default.
 

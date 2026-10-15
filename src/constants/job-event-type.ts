@@ -10,6 +10,10 @@ export const JOB_EVENT_TYPE = {
   QUOTE_DECLINED: "quote_declined",
   REVIEW_CREATED: "review_created",
   REQUEST_ITEMS_UPDATED: "request_items_updated",
+  VISIT_RESCHEDULE_PROPOSED: "visit_reschedule_proposed",
+  VISIT_RESCHEDULED: "visit_rescheduled",
+  VISIT_RESCHEDULE_DECLINED: "visit_reschedule_declined",
+  VISIT_RESCHEDULE_WITHDRAWN: "visit_reschedule_withdrawn",
 } as const;
 
 export type JobEventType = (typeof JOB_EVENT_TYPE)[keyof typeof JOB_EVENT_TYPE];

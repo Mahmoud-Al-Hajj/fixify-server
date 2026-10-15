@@ -8,6 +8,8 @@ import {
   listRequestsQuerySchema,
   proposeQuoteSchema,
   requestIdParamsSchema,
+  visitIdParamsSchema,
+  proposeRescheduleSchema,
 } from "./requests.schema";
 import {
   createRequestHandler,
@@ -24,6 +26,10 @@ import {
   acceptQuoteHandler,
   createReviewHandler,
   saveRequestItemsHandler,
+  proposeRescheduleHandler,
+  acceptRescheduleHandler,
+  declineRescheduleHandler,
+  withdrawRescheduleHandler,
 } from "../controllers/requests";
 
 export const requestsRouter = Router();
@@ -102,4 +108,25 @@ requestsRouter.put(
   validate("params", requestIdParamsSchema),
   validateBody(saveRequestItemsSchema),
   saveRequestItemsHandler
+);
+requestsRouter.post(
+  "/:id/visits/:visitId/reschedule",
+  validate("params", visitIdParamsSchema),
+  validateBody(proposeRescheduleSchema),
+  proposeRescheduleHandler
+);
+requestsRouter.post(
+  "/:id/visits/:visitId/reschedule/accept",
+  validate("params", visitIdParamsSchema),
+  acceptRescheduleHandler
+);
+requestsRouter.post(
+  "/:id/visits/:visitId/reschedule/decline",
+  validate("params", visitIdParamsSchema),
+  declineRescheduleHandler
+);
+requestsRouter.post(
+  "/:id/visits/:visitId/reschedule/withdraw",
+  validate("params", visitIdParamsSchema),
+  withdrawRescheduleHandler
 );

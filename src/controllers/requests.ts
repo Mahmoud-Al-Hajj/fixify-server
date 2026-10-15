@@ -2,18 +2,23 @@ import type { Request, Response } from "express";
 import * as requestsService from "../libraries/requests";
 import * as quotesService from "../libraries/quotes";
 import * as reviewsService from "../libraries/reviews";
+import * as visitsService from "../libraries/visits";
+import { RESCHEDULE_ACTION } from "../libraries/visit-rules";
 import { REQUEST_ACTOR_ROLE } from "../constants/request-status";
 import { requireUser } from "../middlewares/authenticate";
 import type { QueryLocals, ParamsLocals } from "../middlewares/validate";
 import type { Visit } from "../models-db/visits";
+import type { Request as RequestRecord } from "../models-db/requests";
 import { toMessageView } from "./intake";
 import type {
   CreateRequestBody,
   CreateReviewBody,
   ListRequestsQuery,
   ProposeQuoteBody,
+  ProposeRescheduleBody,
   RequestIdParams,
   SaveRequestItemsBody,
+  VisitIdParams,
 } from "../routes/requests.schema";
 
 export async function createRequestHandler(
@@ -37,14 +42,41 @@ export async function createRequestHandler(
 }
 
 // A visit nested under its request: requestId and providerId are dropped
-// because the enclosing request already carries them.
-function toVisitView(visit: Visit) {
+// because the enclosing request already carries them. proposedBy is the
+// proposer's role on the request, not their user id.
+function toVisitView(visit: Visit, request: RequestRecord) {
   return {
     id: visit.id,
     status: visit.status,
     scheduledStart: visit.scheduledStart,
     scheduledEnd: visit.scheduledEnd,
     actualStart: visit.actualStart,
+    proposedStart: visit.proposedStart,
+    proposedBy:
+      visit.proposedBy === null
+        ? null
+        : visit.proposedBy === request.customerId
+          ? REQUEST_ACTOR_ROLE.CUSTOMER
+          : REQUEST_ACTOR_ROLE.PROVIDER,
+  };
+}
+
+// The shape of GET /requests/:id, shared by the visit actions.
+function toRequestDetailsView({
+  request,
+  visits,
+  hasReview,
+}: {
+  request: RequestRecord;
+  visits: Visit[];
+  hasReview: boolean;
+}) {
+  return {
+    request: {
+      ...request,
+      visits: visits.map((visit) => toVisitView(visit, request)),
+      hasReview,
+    },
   };
 }
 
@@ -61,7 +93,7 @@ export async function listRequestsHandler(
   }
   const requests = items.map(({ request, nextVisit }) => ({
     ...request,
-    nextVisit: nextVisit === null ? null : toVisitView(nextVisit),
+    nextVisit: nextVisit === null ? null : toVisitView(nextVisit, request),
   }));
   res.status(200).json({ requests });
 }
@@ -170,11 +202,67 @@ export async function getRequestHandler(
   res: Response<unknown, ParamsLocals<RequestIdParams>>
 ): Promise<void> {
   const user = requireUser(req);
-  const { request, visits, hasReview } =
-    await requestsService.getRequestForActor(res.locals.params.id, user.id);
-  res.status(200).json({
-    request: { ...request, visits: visits.map(toVisitView), hasReview },
-  });
+  const details = await requestsService.getRequestForActor(
+    res.locals.params.id,
+    user.id
+  );
+  res.status(200).json(toRequestDetailsView(details));
+}
+
+export async function proposeRescheduleHandler(
+  req: Request,
+  res: Response<unknown, ParamsLocals<VisitIdParams>>
+): Promise<void> {
+  const user = requireUser(req);
+  const { start } = req.body as ProposeRescheduleBody;
+  const { id, visitId } = res.locals.params;
+  const details = await visitsService.proposeReschedule(
+    id,
+    visitId,
+    user.id,
+    start
+  );
+  res.status(200).json(toRequestDetailsView(details));
+}
+
+export async function acceptRescheduleHandler(
+  req: Request,
+  res: Response<unknown, ParamsLocals<VisitIdParams>>
+): Promise<void> {
+  const user = requireUser(req);
+  const { id, visitId } = res.locals.params;
+  const details = await visitsService.acceptReschedule(id, visitId, user.id);
+  res.status(200).json(toRequestDetailsView(details));
+}
+
+export async function declineRescheduleHandler(
+  req: Request,
+  res: Response<unknown, ParamsLocals<VisitIdParams>>
+): Promise<void> {
+  const user = requireUser(req);
+  const { id, visitId } = res.locals.params;
+  const details = await visitsService.closeReschedule(
+    RESCHEDULE_ACTION.DECLINE,
+    id,
+    visitId,
+    user.id
+  );
+  res.status(200).json(toRequestDetailsView(details));
+}
+
+export async function withdrawRescheduleHandler(
+  req: Request,
+  res: Response<unknown, ParamsLocals<VisitIdParams>>
+): Promise<void> {
+  const user = requireUser(req);
+  const { id, visitId } = res.locals.params;
+  const details = await visitsService.closeReschedule(
+    RESCHEDULE_ACTION.WITHDRAW,
+    id,
+    visitId,
+    user.id
+  );
+  res.status(200).json(toRequestDetailsView(details));
 }
 
 export async function createReviewHandler(

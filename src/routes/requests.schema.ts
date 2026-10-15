@@ -138,3 +138,16 @@ export const requestIdParamsSchema = z.object({
   id: z.uuid(),
 });
 export type RequestIdParams = z.infer<typeof requestIdParamsSchema>;
+
+export const visitIdParamsSchema = z.object({
+  id: z.uuid(),
+  visitId: z.uuid(),
+});
+export type VisitIdParams = z.infer<typeof visitIdParamsSchema>;
+
+// The new start for a visit, Beirut wall-clock like requestedStart; the visit
+// keeps its length.
+export const proposeRescheduleSchema = z.object({
+  start: localDateTime,
+});
+export type ProposeRescheduleBody = z.infer<typeof proposeRescheduleSchema>;

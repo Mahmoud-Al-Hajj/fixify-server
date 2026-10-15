@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   computeFreeWindows,
+  fitsWorkingHours,
   proposeSlots,
   type TimeWindow,
 } from "./slot-rules";
@@ -150,5 +151,79 @@ test("a day without working hours gets no slots", () => {
       s.slice(0, 10)
     ),
     ["2026-09-28", "2026-09-30"]
+  );
+});
+
+// fitsWorkingHours: the whole visit inside one window on its weekday.
+const SPLIT_MONDAY = [
+  { weekday: 1, startTime: "09:00", endTime: "12:00" },
+  { weekday: 1, startTime: "13:00", endTime: "17:00" },
+];
+const FIT_CASES: Array<{
+  name: string;
+  start: string;
+  end: string;
+  fits: boolean;
+}> = [
+  {
+    name: "exactly the window",
+    start: "2026-09-28T09:00",
+    end: "2026-09-28T12:00",
+    fits: true,
+  },
+  {
+    name: "inside the second window",
+    start: "2026-09-28T14:00",
+    end: "2026-09-28T15:30",
+    fits: true,
+  },
+  {
+    name: "starts before the window",
+    start: "2026-09-28T08:30",
+    end: "2026-09-28T09:30",
+    fits: false,
+  },
+  {
+    name: "ends after the window",
+    start: "2026-09-28T16:30",
+    end: "2026-09-28T17:30",
+    fits: false,
+  },
+  {
+    name: "spans the lunch gap",
+    start: "2026-09-28T11:30",
+    end: "2026-09-28T13:30",
+    fits: false,
+  },
+  {
+    name: "another weekday",
+    start: "2026-09-29T09:00",
+    end: "2026-09-29T10:00",
+    fits: false,
+  },
+];
+
+for (const { name, start, end, fits } of FIT_CASES) {
+  test(`fitsWorkingHours: ${name} -> ${fits}`, () => {
+    assert.equal(fitsWorkingHours(SPLIT_MONDAY, at(start), at(end)), fits);
+  });
+}
+
+test("fitsWorkingHours: a visit crossing midnight never fits", () => {
+  const lateMonday = [{ weekday: 1, startTime: "20:00", endTime: "23:59" }];
+  assert.equal(
+    fitsWorkingHours(
+      lateMonday,
+      at("2026-09-28T23:00"),
+      at("2026-09-29T00:30")
+    ),
+    false
+  );
+});
+
+test("fitsWorkingHours: no working hours, nothing fits", () => {
+  assert.equal(
+    fitsWorkingHours([], at("2026-09-28T09:00"), at("2026-09-28T10:00")),
+    false
   );
 });

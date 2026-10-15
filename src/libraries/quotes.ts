@@ -6,8 +6,7 @@ import {
   updateRevisedQuote,
   type Request,
 } from "../models-db/requests";
-import { insertVisit, hasOverlappingVisit } from "../models-db/visits";
-import { lockProviderForUpdate } from "../models-db/providers";
+import { insertVisit } from "../models-db/visits";
 import { DEFAULT_VISIT_MINUTES } from "../constants/booking";
 import { insertJobEvent } from "../models-db/job-events";
 import { wallClockToDate, beirutNow } from "../models-db/format-datetime";
@@ -18,7 +17,6 @@ import {
   REQUEST_ACTOR_ROLE,
   type RequestActorRole,
 } from "../constants/request-status";
-import { OPEN_VISIT_STATUSES } from "../constants/visit-status";
 import {
   ConflictError,
   ForbiddenError,
@@ -26,6 +24,7 @@ import {
 } from "../constants/errors";
 import { assertRequestTransition } from "./request-state-machine";
 import { assertQuoteMove } from "./quote-rules";
+import { reserveSlot } from "./visits";
 import {
   loadRequestForActor,
   rereadRequest,
@@ -265,22 +264,12 @@ export async function acceptQuote(
   );
 
   await withTransaction(async (conn) => {
-    // The lock comes first: the overlap read below then sees every visit a
-    // competing booking for this provider committed before we got the lock.
-    await lockProviderForUpdate(conn, request.providerId);
-    if (
-      await hasOverlappingVisit(
-        conn,
-        request.providerId,
-        scheduledStart,
-        scheduledEnd,
-        OPEN_VISIT_STATUSES
-      )
-    ) {
-      throw new ConflictError(
-        "That time overlaps another booking with this provider. Please choose another time."
-      );
-    }
+    await reserveSlot(conn, {
+      providerId: request.providerId,
+      start: scheduledStart,
+      end: scheduledEnd,
+      excludeVisitId: null,
+    });
     await applyQuoteState(conn, request, {
       toStatus: REQUEST_STATUS.SCHEDULED,
       toPriceStatus: PRICE_STATUS.ACCEPTED,

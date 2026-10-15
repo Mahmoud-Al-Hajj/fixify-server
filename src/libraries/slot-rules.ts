@@ -106,3 +106,24 @@ export function proposeSlots(
   }
   return slots;
 }
+
+// Whether [start, end) lies inside one working window on start's weekday
+// (0 = Sunday). Windows end before midnight, so a visit crossing midnight
+// never fits.
+export function fitsWorkingHours(
+  hours: readonly WeeklyHours[],
+  start: Date,
+  end: Date
+): boolean {
+  const day = Date.UTC(
+    start.getUTCFullYear(),
+    start.getUTCMonth(),
+    start.getUTCDate()
+  );
+  return hours.some(
+    (h) =>
+      h.weekday === start.getUTCDay() &&
+      atTime(day, h.startTime) <= start.getTime() &&
+      end.getTime() <= atTime(day, h.endTime)
+  );
+}
