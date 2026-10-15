@@ -2,30 +2,39 @@ import { z } from "zod";
 import { SERVICE_TYPE } from "../constants/service-type";
 import { REQUEST_ACTOR_ROLE } from "../constants/request-status";
 
-const LOCAL_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?$/;
+const LOCAL_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{3})?)?$/;
 const LOCAL_DATETIME_MESSAGE =
-  "Expected a local date-time YYYY-MM-DDTHH:mm[:ss] with no timezone offset";
+  "Expected a local date-time YYYY-MM-DDTHH:mm[:ss[.SSS]] with no timezone offset";
 
-// Beirut wall-clock digits with no offset. Built with Date.UTC because the
-// mysql2 write path encodes a Date through its UTC getters (see
-// insertRequest); a Date built from local components would be shifted.
+// Beirut wall-clock digits with no offset, in the same shape the API returns
+// times (YYYY-MM-DDTHH:mm:ss.SSS), so any returned time can be sent back
+// unchanged. Built with Date.UTC because the mysql2 write path encodes a Date
+// through its UTC getters (see insertRequest); a Date built from local
+// components would be shifted.
 const localDateTime = z.string().transform((value, ctx) => {
   if (LOCAL_DATETIME.test(value)) {
-    const withSeconds = value.length === 16 ? `${value}:00` : value;
-    const year = Number(withSeconds.slice(0, 4));
+    // The regex allows exactly 16, 19 or 23 characters.
+    const full =
+      value.length === 16
+        ? `${value}:00.000`
+        : value.length === 19
+          ? `${value}.000`
+          : value;
+    const year = Number(full.slice(0, 4));
     const date = new Date(
       Date.UTC(
         year,
-        Number(withSeconds.slice(5, 7)) - 1,
-        Number(withSeconds.slice(8, 10)),
-        Number(withSeconds.slice(11, 13)),
-        Number(withSeconds.slice(14, 16)),
-        Number(withSeconds.slice(17, 19))
+        Number(full.slice(5, 7)) - 1,
+        Number(full.slice(8, 10)),
+        Number(full.slice(11, 13)),
+        Number(full.slice(14, 16)),
+        Number(full.slice(17, 19)),
+        Number(full.slice(20, 23))
       )
     );
     // The round-trip rejects values Date.UTC silently rolls over (Feb 30,
     // 24:00) or remaps (years 0-99); 1000 is the DATETIME lower bound.
-    if (year >= 1000 && date.toISOString().slice(0, 19) === withSeconds) {
+    if (year >= 1000 && date.toISOString().slice(0, 23) === full) {
       return date;
     }
   }
