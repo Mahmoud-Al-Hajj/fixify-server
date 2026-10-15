@@ -446,10 +446,10 @@ Two layers, both required:
    first, so the check cannot race. No consistent (plain) read may come before the lock:
    InnoDB takes the snapshot at the first consistent read, so a read before the lock could
    miss a visit committed while waiting. A locking read such as `lockRequestForUpdate` may
-   precede it (it reads the latest data and fixes no snapshot); add-follow-up does exactly
-   that, locking the request row first in the same order as cancel. An overlap maps to a
-   `ConflictError`. This is the one approved exception to "no check-then-insert"; do not
-   copy the pattern without the lock.
+   precede it (it reads the latest data and fixes no snapshot); add-follow-up and reschedule
+   accept do exactly that, locking the request row first in the same order as cancel. An
+   overlap maps to a `ConflictError`. This is the one approved exception to "no
+   check-then-insert"; do not copy the pattern without the lock.
 2. **Unique key.** `visits` has a unique key on `(provider_id, active_slot)`, where
    `active_slot` is a generated column that is `NULL` for cancelled visits. It catches
    identical start times even if a code path skips the check. Application code catches

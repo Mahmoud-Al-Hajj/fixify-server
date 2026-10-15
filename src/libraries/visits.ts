@@ -154,6 +154,8 @@ export async function proposeReschedule(
   }
 
   await withTransaction(async (conn) => {
+    // The request row first, the same order as cancel (CLAUDE.md "Deadlocks").
+    await lockRequestForUpdate(conn, request.id);
     const proposed = await proposeVisitStart(conn, {
       id: visit.id,
       requestId: request.id,
@@ -204,6 +206,8 @@ export async function acceptReschedule(
   const end = endAfterMove(visit, proposal.start);
 
   await withTransaction(async (conn) => {
+    // The request row first, the same order as cancel (CLAUDE.md "Deadlocks").
+    await lockRequestForUpdate(conn, request.id);
     await reserveSlot(conn, {
       providerId: request.providerId,
       start: proposal.start,
@@ -253,6 +257,8 @@ export async function closeReschedule(
   const proposedStart = visit.proposedStart;
 
   await withTransaction(async (conn) => {
+    // The request row first, the same order as cancel (CLAUDE.md "Deadlocks").
+    await lockRequestForUpdate(conn, request.id);
     const cleared = await clearVisitProposal(conn, {
       id: visit.id,
       proposedStart: proposal.start,
