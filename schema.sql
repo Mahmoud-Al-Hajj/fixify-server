@@ -1,8 +1,5 @@
 
 
-CREATE DATABASE IF NOT EXISTS fixify
-  CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;
-USE fixify;
 
 
 CREATE TABLE users (
@@ -23,7 +20,7 @@ CREATE TABLE users (
                                    ON UPDATE CURRENT_TIMESTAMP(3),
   PRIMARY KEY (id),
   UNIQUE KEY uq_users_email (email)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 
 CREATE TABLE providers (
@@ -40,7 +37,7 @@ CREATE TABLE providers (
     REFERENCES users(id) ON DELETE CASCADE,
   CONSTRAINT chk_providers_years CHECK (years_experience BETWEEN 0 AND 70),
   KEY idx_providers_area (area)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 
 CREATE TABLE categories (
@@ -48,7 +45,7 @@ CREATE TABLE categories (
   name VARCHAR(60) NOT NULL,
   PRIMARY KEY (id),
   UNIQUE KEY uq_categories_name (name)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 
 CREATE TABLE provider_categories (
@@ -60,7 +57,7 @@ CREATE TABLE provider_categories (
     REFERENCES providers(id) ON DELETE CASCADE,
   CONSTRAINT fk_pc_category FOREIGN KEY (category_id)
     REFERENCES categories(id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 
 CREATE TABLE provider_availability (
@@ -71,7 +68,7 @@ CREATE TABLE provider_availability (
   PRIMARY KEY (provider_id, weekday, start_time),
   CONSTRAINT fk_avail_provider FOREIGN KEY (provider_id)
     REFERENCES providers(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 
 -- NEW: one row per issue the customer describes in the chat-style intake.
@@ -89,7 +86,7 @@ CREATE TABLE intake_sessions (
   CONSTRAINT fk_is_customer FOREIGN KEY (customer_id)
     REFERENCES users(id) ON DELETE CASCADE,
   KEY idx_is_customer_time (customer_id, created_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 
 -- NEW: the turns of the intake conversation (customer text and AI replies).
@@ -102,7 +99,7 @@ CREATE TABLE intake_messages (
   PRIMARY KEY (id),
   CONSTRAINT fk_im_session FOREIGN KEY (session_id)
     REFERENCES intake_sessions(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 
 -- NEW: images attached to a customer message (files live in object storage).
@@ -114,7 +111,7 @@ CREATE TABLE intake_photos (
   PRIMARY KEY (id),
   CONSTRAINT fk_ip_message FOREIGN KEY (message_id)
     REFERENCES intake_messages(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 
 CREATE TABLE requests (
@@ -158,7 +155,7 @@ CREATE TABLE requests (
 
   KEY idx_req_provider_status (provider_id, status, created_at),
   KEY idx_req_customer_status (customer_id, status, created_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 
 -- NEW: parts / materials the provider needs for a job.
@@ -177,7 +174,7 @@ CREATE TABLE request_items (
   PRIMARY KEY (id),
   CONSTRAINT fk_ri_request FOREIGN KEY (request_id)
     REFERENCES requests(id) ON DELETE CASCADE
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 
 CREATE TABLE visits (
@@ -213,7 +210,7 @@ CREATE TABLE visits (
     REFERENCES users(id),
 
   KEY idx_visits_provider_time (provider_id, scheduled_start, status)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 
 CREATE TABLE job_events (
@@ -229,7 +226,7 @@ CREATE TABLE job_events (
   CONSTRAINT fk_events_actor FOREIGN KEY (actor_user_id)
     REFERENCES users(id) ON DELETE SET NULL,
   KEY idx_events_request_time (request_id, created_at)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 
 CREATE TABLE request_photos (
@@ -242,7 +239,7 @@ CREATE TABLE request_photos (
   CONSTRAINT fk_photos_request FOREIGN KEY (request_id)
     REFERENCES requests(id) ON DELETE CASCADE,
   KEY idx_photos_request_kind (request_id, kind)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 
 CREATE TABLE reviews (
@@ -256,7 +253,7 @@ CREATE TABLE reviews (
   CONSTRAINT fk_reviews_request FOREIGN KEY (request_id)
     REFERENCES requests(id),
   CONSTRAINT chk_reviews_rating CHECK (rating BETWEEN 1 AND 5)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 DELIMITER $$
 CREATE TRIGGER trg_reviews_completed BEFORE INSERT ON reviews

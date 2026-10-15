@@ -196,7 +196,7 @@ If a task appears to require one of these, stop and say so.
 | ---------- | ----------------------------------------------------------------------- |
 | Runtime    | Node.js, TypeScript (strict)                                            |
 | Framework  | Express.js                                                              |
-| Database   | MariaDB 10.4 (MySQL-compatible), InnoDB, accessed via `mysql2/promise`  |
+| Database   | MySQL 9.1, InnoDB, accessed via `mysql2/promise`                        |
 | Auth       | bcrypt password hashing, JWT sessions                                   |
 | Validation | Schema validation at the edge, before any handler logic                 |
 | AI         | Google Gemini API (free tier) — exactly one structured-JSON call: the intake diagnosis |
@@ -368,7 +368,7 @@ options laid out.
   never shifts a value.
 - Columns the database stamps itself (`created_at`, `updated_at`, `responded_at`,
   `completed_at`, `paid_at`, `visits.actual_start`) use `CURRENT_TIMESTAMP(3)` in
-  MariaDB's `SYSTEM` zone, which must be Beirut. The server checks this at startup and
+  MySQL's `SYSTEM` zone, which must be Beirut. The server checks this at startup and
   refuses to start otherwise.
 - **API times are Beirut wall-clock with no offset** (e.g. `2026-09-29T08:00:00.000`).
   Clients must treat them as `Asia/Beirut` explicitly and never parse them with
@@ -378,17 +378,22 @@ options laid out.
   on the spring change the 00:00 hour does not exist. Wall-clock arithmetic stays
   self-consistent; a job spanning midnight on those nights is an hour off in real time.
 
-### MariaDB specifics
+### MySQL 9.1 specifics
 
-- `JSON` is an alias for `LONGTEXT` with a `json_valid` CHECK, so JSON columns
-  come back from mysql2 as strings. Models parse them in one place when mapping
-  the row; nothing above the model layer ever sees raw JSON text.
-- Constraints are removed with `ALTER TABLE t DROP CONSTRAINT name` (MariaDB
-  syntax), not MySQL's `DROP CHECK`.
+- `JSON` is a native type, which mysql2 would return already parsed. The pool
+  sets `jsonStrings: true`, so JSON columns come back as strings. Models parse
+  them in one place when mapping the row; nothing above the model layer ever
+  sees raw JSON text. MySQL stores JSON normalised: object keys may come back
+  in a different order, values unchanged.
+- Constraints are removed with `ALTER TABLE t DROP CONSTRAINT name` (MySQL
+  8.0.19+; `DROP CHECK name` also works for a CHECK).
+- Tables use `utf8mb4` with `COLLATE=utf8mb4_0900_ai_ci`, set on each table;
+  id and hash columns are `ascii`.
 - Migrations live in `migrations/NNN_description.sql` and are applied with the
   `mysql` client. `schema.sql` always describes the current full schema, so a
-  fresh database is built from `schema.sql` alone; migrations bring an
-  existing database up to date.
+  fresh database is built from `schema.sql` alone (loaded into an existing
+  `fixify` database; see the README); migrations bring an existing database up
+  to date.
 
 
 ### Operations that require a transaction

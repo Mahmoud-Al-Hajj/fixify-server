@@ -23,6 +23,8 @@ export const pool = mysql.createPool({
   connectionLimit: 10,
   dateStrings: true,
   timezone: "Z",
+  // MySQL returns JSON columns parsed; the models parse JSON themselves.
+  jsonStrings: true,
 });
 
 export async function assertDbReachable(): Promise<void> {
@@ -35,7 +37,7 @@ export async function assertDbReachable(): Promise<void> {
 }
 
 // Columns the database stamps (CURRENT_TIMESTAMP) must be Beirut wall-clock
-// like every other DATETIME, so MariaDB's clock zone has to be Beirut.
+// like every other DATETIME, so MySQL's clock zone has to be Beirut.
 export async function assertDbClockIsBeirut(): Promise<void> {
   const [rows] = await pool.query<Array<RowDataPacket & { now: string }>>(
     "SELECT NOW(3) AS now"
@@ -45,7 +47,7 @@ export async function assertDbClockIsBeirut(): Promise<void> {
     Math.abs(dbNow.getTime() - beirutNow().getTime()) / 60_000;
   if (!(driftMinutes <= 2)) {
     throw new Error(
-      `Database clock is ${Math.round(driftMinutes)} min away from Beirut time; set MariaDB's time zone to Asia/Beirut`
+      `Database clock is ${Math.round(driftMinutes)} min away from Beirut time; set MySQL's time zone to Asia/Beirut`
     );
   }
 }
