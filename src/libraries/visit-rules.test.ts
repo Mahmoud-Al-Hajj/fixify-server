@@ -1,6 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { REQUEST_STATUS } from "../constants/request-status";
+import {
+  REQUEST_STATUS,
+  REQUEST_ACTOR_ROLE,
+} from "../constants/request-status";
 import { VISIT_STATUS } from "../constants/visit-status";
 import {
   ConflictError,
@@ -10,6 +13,8 @@ import {
 } from "../constants/errors";
 import {
   assertRescheduleAction,
+  assertCanAddFollowUp,
+  type FollowUpCheck,
   RESCHEDULE_ACTION,
   type RescheduleCheck,
 } from "./visit-rules";
@@ -175,6 +180,98 @@ for (const [name, change, errorClass] of REFUSED) {
   test(`reschedule: ${name} is refused with ${errorClass.name}`, () => {
     assert.throws(
       () => assertRescheduleAction({ ...base, ...change }),
+      (err: unknown) => err instanceof errorClass
+    );
+  });
+}
+
+// assertCanAddFollowUp: a valid follow-up by the provider while visit 1 is in
+// progress; each case changes what it needs.
+const followUp: FollowUpCheck = {
+  requestStatus: REQUEST_STATUS.IN_PROGRESS,
+  actorRole: REQUEST_ACTOR_ROLE.PROVIDER,
+  visitStatuses: [VISIT_STATUS.IN_PROGRESS],
+  start: at("2026-10-20T09:00"),
+  now: NOW,
+};
+
+test("follow-up: the provider, one visit in progress, a future start, is allowed", () => {
+  assert.doesNotThrow(() => assertCanAddFollowUp(followUp));
+});
+
+test("follow-up: earlier done or cancelled visits do not count as open", () => {
+  assert.doesNotThrow(() =>
+    assertCanAddFollowUp({
+      ...followUp,
+      visitStatuses: [
+        VISIT_STATUS.DONE,
+        VISIT_STATUS.CANCELLED,
+        VISIT_STATUS.IN_PROGRESS,
+      ],
+    })
+  );
+});
+
+const FOLLOW_UP_REFUSED: Array<
+  [string, Partial<FollowUpCheck>, new (...args: never[]) => Error]
+> = [
+  [
+    "by the customer",
+    { actorRole: REQUEST_ACTOR_ROLE.CUSTOMER },
+    ForbiddenError,
+  ],
+  [
+    "while the request is pending",
+    { requestStatus: REQUEST_STATUS.PENDING },
+    InvalidTransitionError,
+  ],
+  [
+    "while the request is scheduled",
+    { requestStatus: REQUEST_STATUS.SCHEDULED },
+    InvalidTransitionError,
+  ],
+  [
+    "while the request is completed",
+    { requestStatus: REQUEST_STATUS.COMPLETED },
+    InvalidTransitionError,
+  ],
+  [
+    "while the request is cancelled",
+    { requestStatus: REQUEST_STATUS.CANCELLED },
+    InvalidTransitionError,
+  ],
+  [
+    "while the request is rejected",
+    { requestStatus: REQUEST_STATUS.REJECTED },
+    InvalidTransitionError,
+  ],
+  [
+    "with no visit in progress",
+    { visitStatuses: [VISIT_STATUS.DONE] },
+    ConflictError,
+  ],
+  [
+    "with two visits in progress",
+    { visitStatuses: [VISIT_STATUS.IN_PROGRESS, VISIT_STATUS.IN_PROGRESS] },
+    ConflictError,
+  ],
+  [
+    "with a scheduled visit alongside",
+    { visitStatuses: [VISIT_STATUS.IN_PROGRESS, VISIT_STATUS.SCHEDULED] },
+    ConflictError,
+  ],
+  [
+    "with a start in the past",
+    { start: at("2026-10-15T11:00") },
+    ValidationError,
+  ],
+  ["with a start of exactly now", { start: NOW }, ValidationError],
+];
+
+for (const [name, change, errorClass] of FOLLOW_UP_REFUSED) {
+  test(`follow-up: ${name} is refused with ${errorClass.name}`, () => {
+    assert.throws(
+      () => assertCanAddFollowUp({ ...followUp, ...change }),
       (err: unknown) => err instanceof errorClass
     );
   });

@@ -82,7 +82,10 @@ card, and any row the provider creates or edits is marked `source = 'provider'`.
 
 **Visit — one time the provider shows up.** A request has zero or more visits. This split
 is what makes rescheduling, follow-ups, revisits and multi-day work possible without
-adding job statuses. A visit is created only when a quote is accepted.
+adding job statuses. The first visit is created when a quote is accepted. Later visits are
+added only by the assigned provider as a follow-up while the job is `in_progress`
+(`POST /requests/:id/visits`), which finishes the visit in progress in the same
+transaction, so a job never has more than one open visit.
 
 **Job event — an append-only record of every meaningful action.** Powers three features:
 the booking timeline, the audit trail, and the notification feed. Never updated, never
@@ -154,7 +157,9 @@ SCHEDULED ─────────start(P)────────> IN_PROGRE
    └──────────┴─────────── cancel ─────────────┴──> CANCELLED
 ```
 
-Starting a job moves the visit straight from `SCHEDULED` to `IN_PROGRESS`. `EN_ROUTE`
+Starting a job moves the visit straight from `SCHEDULED` to `IN_PROGRESS`. On a job already
+`in_progress` (a follow-up is scheduled), start moves that next visit instead and writes
+another `request_started` event with its `visitId`; the job status does not change. `EN_ROUTE`
 ("On my way") is a Phase 4 addition to be layered on top of this later; nothing moves a
 visit into it yet, and nothing is designed around it. Cancelling a request cancels every
 visit that is not yet `DONE` or `CANCELLED`, which releases its slot (`active_slot`
@@ -432,17 +437,19 @@ its `intake_photos` rows commit together.
 
 Two layers, both required:
 
-1. **Overlap check under a lock.** Inside the accept-quote and accept-reschedule
-   transactions, the first statement is `SELECT … FROM providers WHERE id = ? FOR UPDATE`
-   (`lockProviderForUpdate`). Only then does the service check for an open visit of that
-   provider whose `[scheduled_start, scheduled_end)` overlaps the new one (a visit being
-   moved is excluded), and insert or move the visit. Both go through `reserveSlot`
-   (`libraries/visits.ts`). Every booking for a provider takes the same lock first, so the check
-   cannot race. The lock must be the transaction's first read: InnoDB takes the
-   consistent-read snapshot at the first plain read, so a read before the lock could
-   miss a visit committed while waiting. An overlap maps to a `ConflictError`. This is
-   the one approved exception to "no check-then-insert"; do not copy the pattern
-   without the lock.
+1. **Overlap check under a lock.** Inside the accept-quote, accept-reschedule and
+   add-follow-up transactions, the service takes `SELECT … FROM providers WHERE id = ? FOR
+   UPDATE` (`lockProviderForUpdate`) before any plain read. Only then does it check for an
+   open visit of that provider whose `[scheduled_start, scheduled_end)` overlaps the new one
+   (a visit being moved is excluded), and insert or move the visit. All three go through
+   `reserveSlot` (`libraries/visits.ts`). Every booking for a provider takes the same lock
+   first, so the check cannot race. No consistent (plain) read may come before the lock:
+   InnoDB takes the snapshot at the first consistent read, so a read before the lock could
+   miss a visit committed while waiting. A locking read such as `lockRequestForUpdate` may
+   precede it (it reads the latest data and fixes no snapshot); add-follow-up does exactly
+   that, locking the request row first in the same order as cancel. An overlap maps to a
+   `ConflictError`. This is the one approved exception to "no check-then-insert"; do not
+   copy the pattern without the lock.
 2. **Unique key.** `visits` has a unique key on `(provider_id, active_slot)`, where
    `active_slot` is a generated column that is `NULL` for cancelled visits. It catches
    identical start times even if a code path skips the check. Application code catches
@@ -451,6 +458,13 @@ Two layers, both required:
 
 Suggested slots (see "Slots are deterministic") are only suggestions; they do not replace
 either layer.
+
+**Deadlocks.** An INSERT into `visits` or `job_events` checks its foreign key with a shared
+lock on the parent `requests` row, so a transaction that writes a visit before that insert
+can deadlock with a cancel (request row, then visits). Take the request row first where a
+transaction both locks visits and inserts children of the request. `withTransaction` maps
+any remaining deadlock (1213, `ER_LOCK_DEADLOCK`) to a 409 `ConflictError`; the client
+retries.
 
 ---
 

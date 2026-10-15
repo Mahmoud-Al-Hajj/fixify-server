@@ -7,6 +7,8 @@ import {
   proposeVisitStart,
   moveVisitToProposedStart,
   clearVisitProposal,
+  updateVisitStatus,
+  insertVisit,
   type Visit,
 } from "../models-db/visits";
 import {
@@ -15,10 +17,13 @@ import {
 } from "../models-db/providers";
 import { insertJobEvent } from "../models-db/job-events";
 import { wallClockToDate, beirutNow } from "../models-db/format-datetime";
-import type { Request } from "../models-db/requests";
+import { lockRequestForUpdate, type Request } from "../models-db/requests";
 import { JOB_EVENT_TYPE } from "../constants/job-event-type";
-import { REQUEST_ACTOR_ROLE } from "../constants/request-status";
-import { OPEN_VISIT_STATUSES } from "../constants/visit-status";
+import {
+  REQUEST_ACTOR_ROLE,
+  REQUEST_STATUS,
+} from "../constants/request-status";
+import { OPEN_VISIT_STATUSES, VISIT_STATUS } from "../constants/visit-status";
 import {
   ConflictError,
   NotFoundError,
@@ -32,6 +37,7 @@ import {
 import { fitsWorkingHours } from "./slot-rules";
 import {
   assertRescheduleAction,
+  assertCanAddFollowUp,
   RESCHEDULE_ACTION,
   type RescheduleAction,
 } from "./visit-rules";
@@ -264,6 +270,82 @@ export async function closeReschedule(
           ? JOB_EVENT_TYPE.VISIT_RESCHEDULE_WITHDRAWN
           : JOB_EVENT_TYPE.VISIT_RESCHEDULE_DECLINED,
       payload: { visitId: visit.id, proposedStart },
+    });
+  });
+
+  return getRequestForActor(request.id, actorUserId);
+}
+
+// The provider adds a follow-up visit to a job under way (a part to fetch, a
+// second day). In one transaction the visit in progress is finished and the
+// new one is booked under the same reserveSlot as quote acceptance. The
+// request row is locked first, the same order as cancel: the visit and event
+// inserts check their foreign keys with shared locks on that row, so taking it
+// later could deadlock against a cancel. Working hours are not checked.
+export async function addFollowUpVisit(
+  requestId: string,
+  actorUserId: string,
+  start: Date,
+  durationMinutes: number
+): Promise<RequestDetails> {
+  const { request, actorRole } = await loadRequestForActor(
+    requestId,
+    actorUserId
+  );
+  const visits = await findVisitsForRequest(request.id);
+  assertCanAddFollowUp({
+    requestStatus: request.status,
+    actorRole,
+    visitStatuses: visits.map((visit) => visit.status),
+    start,
+    now: beirutNow(),
+  });
+  const current = visits.find(
+    (visit) => visit.status === VISIT_STATUS.IN_PROGRESS
+  );
+  if (!current) {
+    throw new Error("A follow-up passed its check with no visit in progress");
+  }
+  const end = new Date(start.getTime() + durationMinutes * 60_000);
+  const visitId = randomUUID();
+
+  await withTransaction(async (conn) => {
+    const status = await lockRequestForUpdate(conn, request.id);
+    if (status !== REQUEST_STATUS.IN_PROGRESS) {
+      throw new ConflictError(CHANGED_CONCURRENTLY_MESSAGE);
+    }
+    await reserveSlot(conn, {
+      providerId: request.providerId,
+      start,
+      end,
+      excludeVisitId: null,
+    });
+    const finished = await updateVisitStatus(conn, {
+      id: current.id,
+      fromStatus: VISIT_STATUS.IN_PROGRESS,
+      toStatus: VISIT_STATUS.DONE,
+      markActualStart: false,
+    });
+    if (!finished) {
+      throw new ConflictError(CHANGED_CONCURRENTLY_MESSAGE);
+    }
+    await insertVisit(conn, {
+      id: visitId,
+      requestId: request.id,
+      providerId: request.providerId,
+      scheduledStart: start,
+      scheduledEnd: end,
+    });
+    await insertJobEvent(conn, {
+      id: randomUUID(),
+      requestId: request.id,
+      actorUserId,
+      eventType: JOB_EVENT_TYPE.VISIT_ADDED,
+      payload: {
+        visitId,
+        scheduledStart: start.toISOString().slice(0, 23),
+        finishedVisitId: current.id,
+      },
     });
   });
 

@@ -1,8 +1,14 @@
 import {
   REQUEST_STATUS,
+  REQUEST_ACTOR_ROLE,
+  type RequestActorRole,
   type RequestStatus,
 } from "../constants/request-status";
-import { VISIT_STATUS, type VisitStatus } from "../constants/visit-status";
+import {
+  VISIT_STATUS,
+  OPEN_VISIT_STATUSES,
+  type VisitStatus,
+} from "../constants/visit-status";
 import {
   ConflictError,
   ForbiddenError,
@@ -89,5 +95,41 @@ export function assertRescheduleAction(check: RescheduleCheck): void {
     throw new ConflictError(
       "The proposed time has passed; decline it or propose a new one"
     );
+  }
+}
+
+export interface FollowUpCheck {
+  requestStatus: RequestStatus;
+  actorRole: RequestActorRole;
+  visitStatuses: readonly VisitStatus[];
+  start: Date;
+  now: Date;
+}
+
+// The assigned provider adds a follow-up visit to a job under way: the one
+// visit in progress is finished and the new one is scheduled, so a job never
+// has more than one open visit.
+export function assertCanAddFollowUp(check: FollowUpCheck): void {
+  if (check.actorRole !== REQUEST_ACTOR_ROLE.PROVIDER) {
+    throw new ForbiddenError("Only the provider can add a follow-up visit");
+  }
+  if (check.requestStatus !== REQUEST_STATUS.IN_PROGRESS) {
+    throw new InvalidTransitionError(
+      `A follow-up visit can only be added while the request is in progress, not '${check.requestStatus}'`
+    );
+  }
+  const inProgress = check.visitStatuses.filter(
+    (status) => status === VISIT_STATUS.IN_PROGRESS
+  ).length;
+  const open = check.visitStatuses.filter((status) =>
+    OPEN_VISIT_STATUSES.includes(status)
+  ).length;
+  if (inProgress !== 1 || open !== 1) {
+    throw new ConflictError(
+      "A follow-up visit needs exactly one visit in progress and no other open visit"
+    );
+  }
+  if (check.start <= check.now) {
+    throw new ValidationError("The follow-up visit must start in the future");
   }
 }

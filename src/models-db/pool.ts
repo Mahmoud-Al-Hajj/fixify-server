@@ -1,6 +1,7 @@
 import mysql, { type PoolConnection, type RowDataPacket } from "mysql2/promise";
 import { env } from "../config/env";
 import { beirutNow, wallClockToDate } from "./format-datetime";
+import { ConflictError } from "../constants/errors";
 
 // Every DATETIME column in this schema is Beirut wall-clock time stored
 // with no offset — written and read as plain digits, never as a UTC
@@ -53,7 +54,9 @@ export async function assertDbClockIsBeirut(): Promise<void> {
 }
 
 // Runs work on one connection inside a transaction: commits if it resolves,
-// rolls back and rethrows if it throws.
+// rolls back and rethrows if it throws. A deadlock (1213) means another write
+// on the same rows won; InnoDB has already rolled this one back, and it is
+// reported like any other concurrent change, so the client can retry.
 export async function withTransaction<T>(
   work: (conn: PoolConnection) => Promise<T>
 ): Promise<T> {
@@ -66,6 +69,11 @@ export async function withTransaction<T>(
       return result;
     } catch (err) {
       await conn.rollback();
+      if (isDbError(err, "ER_LOCK_DEADLOCK", "Deadlock")) {
+        throw new ConflictError(
+          "This was changed at the same time by another action; try again"
+        );
+      }
       throw err;
     }
   } finally {

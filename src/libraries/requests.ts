@@ -565,10 +565,56 @@ async function applyVisitTransition(
   }
 }
 
+// A job that is already in progress has finished its visit and has a
+// follow-up scheduled: start that one. Not a request transition, so the
+// state machine is not involved; the role rule matches its start(P).
+async function startNextVisit(
+  request: Request,
+  actorRole: RequestActorRole,
+  actorUserId: string
+): Promise<Request> {
+  if (actorRole !== REQUEST_ACTOR_ROLE.PROVIDER) {
+    throw new ForbiddenError("Only the provider can start a visit");
+  }
+  const visits = await findVisitsForRequest(request.id);
+  if (visits.some((visit) => visit.status === VISIT_STATUS.IN_PROGRESS)) {
+    throw new ConflictError("A visit of this request is already in progress");
+  }
+  const next = visits.find((visit) => visit.status === VISIT_STATUS.SCHEDULED);
+  if (!next) {
+    throw new ConflictError("This request has no scheduled visit to start");
+  }
+
+  // The request row first, the same lock order as cancel.
+  await withTransaction(async (conn) => {
+    const status = await lockRequestForUpdate(conn, request.id);
+    if (status !== REQUEST_STATUS.IN_PROGRESS) {
+      throw new ConflictError(CHANGED_CONCURRENTLY_MESSAGE);
+    }
+    await applyVisitTransition(conn, next, VISIT_STATUS.IN_PROGRESS, true);
+    await insertJobEvent(conn, {
+      id: randomUUID(),
+      requestId: request.id,
+      actorUserId,
+      eventType: JOB_EVENT_TYPE.REQUEST_STARTED,
+      payload: { visitId: next.id },
+    });
+  });
+
+  return rereadRequest(request.id);
+}
+
 export async function startRequest(
   requestId: string,
   actorUserId: string
 ): Promise<Request> {
+  const { request, actorRole } = await loadRequestForActor(
+    requestId,
+    actorUserId
+  );
+  if (request.status === REQUEST_STATUS.IN_PROGRESS) {
+    return startNextVisit(request, actorRole, actorUserId);
+  }
   return transitionRequest({
     requestId,
     actorUserId,
@@ -630,7 +676,7 @@ export async function completeRequest(
       );
       if (otherOpen) {
         throw new ConflictError(
-          "This request still has other open visits; finish or cancel them before completing it"
+          "This request still has a scheduled follow-up visit; start and complete it, or cancel the job."
         );
       }
       return {

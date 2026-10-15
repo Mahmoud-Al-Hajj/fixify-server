@@ -10,6 +10,7 @@ import {
   requestIdParamsSchema,
   visitIdParamsSchema,
   proposeRescheduleSchema,
+  addFollowUpVisitSchema,
 } from "./requests.schema";
 import {
   createRequestHandler,
@@ -30,6 +31,7 @@ import {
   acceptRescheduleHandler,
   declineRescheduleHandler,
   withdrawRescheduleHandler,
+  addFollowUpVisitHandler,
 } from "../controllers/requests";
 
 export const requestsRouter = Router();
@@ -129,4 +131,10 @@ requestsRouter.post(
   "/:id/visits/:visitId/reschedule/withdraw",
   validate("params", visitIdParamsSchema),
   withdrawRescheduleHandler
+);
+requestsRouter.post(
+  "/:id/visits",
+  validate("params", requestIdParamsSchema),
+  validateBody(addFollowUpVisitSchema),
+  addFollowUpVisitHandler
 );

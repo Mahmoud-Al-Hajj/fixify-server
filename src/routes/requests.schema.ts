@@ -151,3 +151,11 @@ export const proposeRescheduleSchema = z.object({
   start: localDateTime,
 });
 export type ProposeRescheduleBody = z.infer<typeof proposeRescheduleSchema>;
+
+// A follow-up visit the provider adds to a job in progress: its start, Beirut
+// wall-clock, and its length (the provider knows how long it needs).
+export const addFollowUpVisitSchema = z.object({
+  start: localDateTime,
+  durationMinutes: z.number().int().min(15).max(1440),
+});
+export type AddFollowUpVisitBody = z.infer<typeof addFollowUpVisitSchema>;

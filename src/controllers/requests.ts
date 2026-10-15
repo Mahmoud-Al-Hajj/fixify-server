@@ -11,6 +11,7 @@ import type { Visit } from "../models-db/visits";
 import type { Request as RequestRecord } from "../models-db/requests";
 import { toMessageView } from "./intake";
 import type {
+  AddFollowUpVisitBody,
   CreateRequestBody,
   CreateReviewBody,
   ListRequestsQuery,
@@ -314,4 +315,19 @@ export async function saveRequestItemsHandler(
       items
     ),
   });
+}
+
+export async function addFollowUpVisitHandler(
+  req: Request,
+  res: Response<unknown, ParamsLocals<RequestIdParams>>
+): Promise<void> {
+  const user = requireUser(req);
+  const { start, durationMinutes } = req.body as AddFollowUpVisitBody;
+  const details = await visitsService.addFollowUpVisit(
+    res.locals.params.id,
+    user.id,
+    start,
+    durationMinutes
+  );
+  res.status(201).json(toRequestDetailsView(details));
 }
