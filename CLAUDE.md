@@ -138,7 +138,9 @@ not add one — it would be a second source of truth for the same fact.
 a reason. It waits in `requests.revised_price`; meanwhile `price` keeps the agreed amount
 and `price_status` is `proposed`. Accepting copies `revised_price` into `price` and clears
 it; declining just clears it. Both return `price_status` to `accepted`. A job cannot be
-completed while a revision is waiting (the completing UPDATE checks it). The agreed price
+completed while a revision is waiting (the completing UPDATE checks it). Cancelling
+withdraws a waiting revision first; the agreed price stays. `chk_req_revision` (migration
+005) allows `revised_price` only while `proposed` on an `in_progress` job. The agreed price
 is always `requests.price`: never derive or restore a price from `job_events`, which are
 an audit trail only.
 
@@ -722,7 +724,8 @@ Every line written ships as-is.
 Seed scripts are the one exception, and only under `scripts/`, never reachable from a
 route. Demo data for the presentation belongs there.
 
-The request state machine is expected to have unit tests, and so are slot generation
+The request state machine and the quote rules (`libraries/quote-rules.ts`) are expected
+to have unit tests, and so are slot generation
 (`libraries/slot-rules.ts`) and the booking-from-session derivations
 (`deriveBookingFields`, `buildDescription`). Other test suites are added on request, not
 by default.

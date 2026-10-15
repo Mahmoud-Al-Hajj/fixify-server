@@ -292,7 +292,10 @@ ALTER TABLE requests
     revised_price IS NULL OR revised_price >= 0),
   ADD CONSTRAINT chk_req_duration CHECK (
     estimated_duration_minutes IS NULL OR
-    estimated_duration_minutes BETWEEN 15 AND 1440);
+    estimated_duration_minutes BETWEEN 15 AND 1440),
+  ADD CONSTRAINT chk_req_revision CHECK (
+    revised_price IS NULL OR
+    (price_status = 'proposed' AND status = 'in_progress'));
 
 ALTER TABLE visits
   ADD CONSTRAINT chk_visits_status CHECK (status IN

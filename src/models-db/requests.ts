@@ -8,7 +8,7 @@ import { formatMysqlDateTime } from "./format-datetime";
 import type { RequestStatus } from "../constants/request-status";
 import { ConflictError, ERROR_CODE } from "../constants/errors";
 import type { ServiceType } from "../constants/service-type";
-import type { PriceStatus } from "../constants/price-status";
+import { PRICE_STATUS, type PriceStatus } from "../constants/price-status";
 
 // Beirut wall-clock, no offset. See pool.ts for the schema-wide convention.
 // providerPhone lets the customer's app call the assigned provider. The
@@ -297,6 +297,20 @@ export async function updateRevisedQuote(
     ]
   );
   return result.affectedRows === 1;
+}
+
+// Drops a revised quote still waiting for the customer; the agreed price
+// stays. A no-op when none is waiting. Runs before the status UPDATE that
+// closes the job, because chk_req_revision is checked per statement.
+export async function withdrawPendingRevision(
+  conn: PoolConnection,
+  id: string
+): Promise<void> {
+  await conn.query(
+    `UPDATE requests SET price_status = ?, revised_price = NULL
+     WHERE id = ? AND price_status = ? AND revised_price IS NOT NULL`,
+    [PRICE_STATUS.ACCEPTED, id, PRICE_STATUS.PROPOSED]
+  );
 }
 
 export async function findRequestById(id: string): Promise<Request | null> {

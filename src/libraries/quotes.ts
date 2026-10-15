@@ -16,57 +16,21 @@ import { PRICE_STATUS, type PriceStatus } from "../constants/price-status";
 import {
   REQUEST_STATUS,
   REQUEST_ACTOR_ROLE,
-  type RequestStatus,
   type RequestActorRole,
 } from "../constants/request-status";
 import { OPEN_VISIT_STATUSES } from "../constants/visit-status";
 import {
   ConflictError,
   ForbiddenError,
-  InvalidTransitionError,
   ValidationError,
 } from "../constants/errors";
 import { assertRequestTransition } from "./request-state-machine";
+import { assertQuoteMove } from "./quote-rules";
 import {
   loadRequestForActor,
   rereadRequest,
   CHANGED_CONCURRENTLY_MESSAGE,
 } from "./requests";
-
-// Legal quote moves, and while the request is in which status. Pending moves are the initial quote. In-progress moves are a revised
-// quote for extra work found mid-job; declining a revision keeps the agreed
-// price, so it also lands on accepted.
-const QUOTE_RULES: ReadonlyArray<{
-  from: PriceStatus;
-  to: PriceStatus;
-  during: readonly RequestStatus[];
-}> = [
-  {
-    from: PRICE_STATUS.NONE,
-    to: PRICE_STATUS.PROPOSED,
-    during: [REQUEST_STATUS.PENDING],
-  },
-  {
-    from: PRICE_STATUS.DECLINED,
-    to: PRICE_STATUS.PROPOSED,
-    during: [REQUEST_STATUS.PENDING],
-  },
-  {
-    from: PRICE_STATUS.PROPOSED,
-    to: PRICE_STATUS.ACCEPTED,
-    during: [REQUEST_STATUS.PENDING, REQUEST_STATUS.IN_PROGRESS],
-  },
-  {
-    from: PRICE_STATUS.PROPOSED,
-    to: PRICE_STATUS.DECLINED,
-    during: [REQUEST_STATUS.PENDING],
-  },
-  {
-    from: PRICE_STATUS.ACCEPTED,
-    to: PRICE_STATUS.PROPOSED,
-    during: [REQUEST_STATUS.IN_PROGRESS],
-  },
-];
 
 // role is who may take the action at all (checked before any state, so a
 // wrong role is always 403). targetFor picks the price_status it moves to. While in progress, a
@@ -93,17 +57,7 @@ async function loadForQuoteAction(
   ) {
     throw new ConflictError("No revised quote is waiting.");
   }
-  const rule = QUOTE_RULES.find(
-    (r) => r.from === request.priceStatus && r.to === targetPriceStatus
-  );
-  if (!rule) {
-    throw new InvalidTransitionError(`Cannot move ${move}`);
-  }
-  if (!rule.during.includes(request.status)) {
-    throw new InvalidTransitionError(
-      `Cannot move ${move} while the request is '${request.status}'`
-    );
-  }
+  assertQuoteMove(request.priceStatus, targetPriceStatus, request.status);
   return { request, actorRole };
 }
 

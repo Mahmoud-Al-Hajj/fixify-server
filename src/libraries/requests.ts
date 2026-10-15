@@ -7,6 +7,7 @@ import {
   updateRequestStatus,
   lockRequestForUpdate,
   markRequestPaid as markRequestPaidModel,
+  withdrawPendingRevision,
   listRequestsForCustomer as listRequestsForCustomerModel,
   listRequestsForProvider as listRequestsForProviderModel,
   type Request,
@@ -408,6 +409,11 @@ export const CHANGED_CONCURRENTLY_MESSAGE =
 
 interface TransitionSideEffects {
   eventPayload: Readonly<Record<string, string>> | null;
+  // Runs inside the transaction before the conditional request update, for a
+  // change without which the new status would violate a CHECK. Its UPDATE of
+  // the request row by primary key locks the row from then on, even when it
+  // changes nothing (REPEATABLE READ).
+  beforeStatusUpdate?: (conn: PoolConnection) => Promise<void>;
   // Runs inside the transaction after the conditional request update, so the
   // request row is already locked when visits are touched. Every transition
   // takes that lock first, which is what serialises e.g. a start racing a
@@ -439,6 +445,9 @@ async function transitionRequest(input: TransitionInput): Promise<Request> {
     : { eventPayload: null };
 
   await withTransaction(async (conn) => {
+    if (sideEffects.beforeStatusUpdate) {
+      await sideEffects.beforeStatusUpdate(conn);
+    }
     const updated = await updateRequestStatus(conn, {
       id: request.id,
       fromStatus: request.status,
@@ -490,10 +499,12 @@ export async function cancelRequest(
     eventType: JOB_EVENT_TYPE.REQUEST_CANCELLED,
     markResponded: false,
     markCompleted: false,
+    // A revised quote still waiting is withdrawn; the agreed price stays.
     // Every open visit is cancelled with the request, which releases its
     // slot. A pending request has no visits, so this is a no-op there.
     prepare: async (request) => ({
       eventPayload: { from: request.status },
+      beforeStatusUpdate: (conn) => withdrawPendingRevision(conn, request.id),
       applyVisitChanges: (conn) =>
         cancelOpenVisitsForRequest(conn, request.id, OPEN_VISIT_STATUSES),
     }),
