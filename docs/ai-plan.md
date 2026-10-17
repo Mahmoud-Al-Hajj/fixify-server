@@ -635,7 +635,7 @@ Later, at quote acceptance (existing code): the visit is created with length `CO
 
 - **Lock order:** booking locks only the session row. The provider lock and the visit stay at quote acceptance, as today. Add-message and the analysis finish also touch only the session, so nothing deadlocks.
 - **Pending at booking:** the analysis finish UPDATE waits for the booking to commit, then writes `done` as a late diagnosis (card only, no parts). Finished before booking: booking uses it.
-- **Edge case:** the customer skipped, saw slots for 60 min, and the diagnosis landed just before Book with the same trade and a longer duration. The request then carries the longer duration, and the slot may not fit it when the quote is accepted → the existing slot 409; the customer picks another time.
+- **Edge case:** the customer skipped, saw slots for 60 min, and the diagnosis landed just before Book with the same trade and a longer duration. The request then carries the longer duration, and the slot may not fit it when the quote is accepted → the existing slot 409; the customer changes the requested start (`POST /requests/:id/requested-start`) and accepts again.
 
 ### 13.4 Event payload and the late label
 

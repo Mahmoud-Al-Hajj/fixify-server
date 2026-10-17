@@ -12,6 +12,7 @@ import type { Request as RequestRecord } from "../models-db/requests";
 import { toMessageView } from "./intake";
 import type {
   AddFollowUpVisitBody,
+  ChangeRequestedStartBody,
   CreateRequestBody,
   CreateReviewBody,
   ListRequestsQuery,
@@ -182,6 +183,20 @@ export async function declineQuoteHandler(
   const request = await quotesService.declineQuote(
     res.locals.params.id,
     user.id
+  );
+  res.status(200).json({ request });
+}
+
+export async function changeRequestedStartHandler(
+  req: Request,
+  res: Response<unknown, ParamsLocals<RequestIdParams>>
+): Promise<void> {
+  const user = requireUser(req);
+  const { requestedStart } = req.body as ChangeRequestedStartBody;
+  const request = await requestsService.changeRequestedStart(
+    res.locals.params.id,
+    user.id,
+    requestedStart
   );
   res.status(200).json({ request });
 }

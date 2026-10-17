@@ -178,6 +178,15 @@ export const proposeRescheduleSchema = z.object({
 });
 export type ProposeRescheduleBody = z.infer<typeof proposeRescheduleSchema>;
 
+// The customer's new time for a pending job, Beirut wall-clock like
+// requestedStart at booking.
+export const changeRequestedStartSchema = z.object({
+  requestedStart: localDateTime,
+});
+export type ChangeRequestedStartBody = z.infer<
+  typeof changeRequestedStartSchema
+>;
+
 // A follow-up visit the provider adds to a job in progress: its start, Beirut
 // wall-clock, and its length (the provider knows how long it needs).
 export const addFollowUpVisitSchema = z.object({

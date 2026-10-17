@@ -11,6 +11,7 @@ import {
   listRequestsForCustomer as listRequestsForCustomerModel,
   listRequestsForProvider as listRequestsForProviderModel,
   findRequestNames,
+  updateRequestedStart,
   type Request,
   type NamedRequest,
   type InsertRequestInput,
@@ -18,6 +19,7 @@ import {
 import {
   findProviderAcceptance,
   providerAcceptsCategory,
+  listAvailability,
 } from "../models-db/providers";
 import {
   findVisitsForRequest,
@@ -31,7 +33,7 @@ import {
   findAiStatusAtBooking,
   listEventsForRequest,
 } from "../models-db/job-events";
-import { beirutNow } from "../models-db/format-datetime";
+import { beirutNow, wallClockToDate } from "../models-db/format-datetime";
 import { findReviewForRequest } from "../models-db/reviews";
 import {
   findIntakeSession,
@@ -51,7 +53,7 @@ import {
 import { ITEM_SOURCE } from "../constants/item-source";
 import { AI_STATUS, type AiStatus } from "../constants/ai-status";
 import { MESSAGE_SENDER } from "../constants/message-sender";
-import { BOOKING_SOURCE } from "../constants/booking";
+import { BOOKING_SOURCE, DEFAULT_VISIT_MINUTES } from "../constants/booking";
 import {
   VISIT_STATUS,
   OPEN_VISIT_STATUSES,
@@ -80,6 +82,7 @@ import {
 } from "./intake";
 import { buildDescription, deriveBookingFields } from "./booking-from-session";
 import { toEventEntry, type EventEntry } from "./event-entries";
+import { fitsWorkingHours } from "./slot-rules";
 
 // A request this service just wrote; missing only if deleted concurrently,
 // which no endpoint does.
@@ -760,6 +763,78 @@ export async function markRequestPaid(
       actorUserId,
       eventType: JOB_EVENT_TYPE.REQUEST_PAID,
       payload: { price },
+    });
+  });
+
+  return rereadRequest(request.id);
+}
+
+// The customer moves the time of a job not yet scheduled, e.g. after quote
+// acceptance found the slot taken. It reserves nothing (acceptance still runs
+// reserveSlot) and leaves the quote as it is. The same time again changes
+// nothing, so a double tap or a retry gets the current request.
+export async function changeRequestedStart(
+  requestId: string,
+  actorUserId: string,
+  start: Date
+): Promise<Request> {
+  const { request, actorRole } = await loadRequestForActor(
+    requestId,
+    actorUserId
+  );
+  if (actorRole !== REQUEST_ACTOR_ROLE.CUSTOMER) {
+    throw new ForbiddenError(
+      "Only the customer can change the requested start"
+    );
+  }
+  if (request.status !== REQUEST_STATUS.PENDING) {
+    throw new ConflictError(
+      "The requested start can only change before a quote is accepted"
+    );
+  }
+  const from =
+    request.requestedStart === null
+      ? null
+      : wallClockToDate(request.requestedStart);
+  if (from !== null && from.getTime() === start.getTime()) {
+    return request;
+  }
+  if (start <= beirutNow()) {
+    throw new ValidationError("requestedStart must be in the future");
+  }
+  const minutes = request.estimatedDurationMinutes ?? DEFAULT_VISIT_MINUTES;
+  const end = new Date(start.getTime() + minutes * 60_000);
+  if (
+    !fitsWorkingHours(await listAvailability([request.providerId]), start, end)
+  ) {
+    throw new ValidationError(
+      "That time is outside the provider's working hours"
+    );
+  }
+
+  await withTransaction(async (conn) => {
+    const changed = await updateRequestedStart(conn, {
+      id: request.id,
+      status: REQUEST_STATUS.PENDING,
+      fromRequestedStart: from,
+      requestedStart: start,
+    });
+    if (!changed) {
+      throw new ConflictError(CHANGED_CONCURRENTLY_MESSAGE);
+    }
+    await insertJobEvent(conn, {
+      id: randomUUID(),
+      requestId: request.id,
+      actorUserId,
+      eventType: JOB_EVENT_TYPE.REQUESTED_START_CHANGED,
+      // from is absent only on a request booked before requestedStart was
+      // required.
+      payload: {
+        ...(request.requestedStart === null
+          ? {}
+          : { from: request.requestedStart }),
+        to: start.toISOString().slice(0, 23),
+      },
     });
   });
 

@@ -11,6 +11,7 @@ import {
   visitIdParamsSchema,
   proposeRescheduleSchema,
   addFollowUpVisitSchema,
+  changeRequestedStartSchema,
 } from "./requests.schema";
 import {
   createRequestHandler,
@@ -33,6 +34,7 @@ import {
   declineRescheduleHandler,
   withdrawRescheduleHandler,
   addFollowUpVisitHandler,
+  changeRequestedStartHandler,
 } from "../controllers/requests";
 
 export const requestsRouter = Router();
@@ -99,6 +101,12 @@ requestsRouter.post(
   "/:id/quote/decline",
   validate("params", requestIdParamsSchema),
   declineQuoteHandler
+);
+requestsRouter.post(
+  "/:id/requested-start",
+  validate("params", requestIdParamsSchema),
+  validateBody(changeRequestedStartSchema),
+  changeRequestedStartHandler
 );
 requestsRouter.post(
   "/:id/quote/accept",

@@ -252,7 +252,7 @@ export async function acceptQuote(
   const scheduledStart = wallClockToDate(request.requestedStart);
   if (scheduledStart <= beirutNow()) {
     throw new ConflictError(
-      "The requested start time has passed; cancel this request and book a new time"
+      "The requested start time has passed; change the requested start and accept again"
     );
   }
   // COALESCE(estimated_duration_minutes, 60): a job nobody estimated gets the

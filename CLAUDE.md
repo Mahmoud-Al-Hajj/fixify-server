@@ -122,7 +122,11 @@ suggested slots (deterministic) ──customer picks slot──> request created
 
 The chosen slot is stored in `requests.requested_start`. It is not reserved until a quote
 is accepted and the first visit is inserted; at that point the visits unique key is the
-guarantee (see "Double-booking"). "Add to calendar" is entirely client-side (the device
+guarantee (see "Double-booking"). While the request is `pending`, the customer may change
+it (`POST /requests/:id/requested-start`): a future time that fits the provider's working
+hours for `COALESCE(estimated_duration_minutes, 60)` (400 otherwise), the same time again is
+a no-op, and the proposed quote stands. It reserves nothing; this is how a customer gets past
+a slot-taken 409 at quote acceptance. "Add to calendar" is entirely client-side (the device
 calendar); the server exposes no calendar or ICS endpoint.
 
 ### Request lifecycle
@@ -183,7 +187,9 @@ keeps the visit's length, refuses a time that has passed (409), and runs the sam
 (`libraries/visit-rules.ts`).
 
 Visits are the source of truth for appointment times. `requests.requested_start` keeps the
-time chosen at booking and is not updated when the first visit is rescheduled.
+last time the customer chose before the quote was accepted and is not updated when the first
+visit is rescheduled. A time change racing a quote accept can leave the visit at the old time;
+once scheduled, the visit is the truth.
 
 Every transition, on both request and visit, is validated server-side against the current
 persisted state. The client's claim about current state is never trusted.

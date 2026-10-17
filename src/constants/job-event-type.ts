@@ -5,6 +5,7 @@ export const JOB_EVENT_TYPE = {
   REQUEST_STARTED: "request_started",
   REQUEST_COMPLETED: "request_completed",
   REQUEST_PAID: "request_paid",
+  REQUESTED_START_CHANGED: "requested_start_changed",
   QUOTE_PROPOSED: "quote_proposed",
   QUOTE_ACCEPTED: "quote_accepted",
   QUOTE_DECLINED: "quote_declined",

@@ -349,6 +349,26 @@ export async function withdrawPendingRevision(
   );
 }
 
+// The customer's new time for a job not yet scheduled. Same optimistic
+// contract as updateRequestStatus: false when the request left the status or
+// its time changed since the caller read it.
+export async function updateRequestedStart(
+  conn: PoolConnection,
+  input: {
+    id: string;
+    status: RequestStatus;
+    fromRequestedStart: Date | null;
+    requestedStart: Date;
+  }
+): Promise<boolean> {
+  const [result] = await conn.query<ResultSetHeader>(
+    `UPDATE requests SET requested_start = ?
+     WHERE id = ? AND status = ? AND requested_start <=> ?`,
+    [input.requestedStart, input.id, input.status, input.fromRequestedStart]
+  );
+  return result.affectedRows === 1;
+}
+
 export async function findRequestById(id: string): Promise<Request | null> {
   const [rows] = await pool.query<RequestRow[]>(
     `SELECT ${REQUEST_COLUMNS} FROM requests WHERE id = ?`,

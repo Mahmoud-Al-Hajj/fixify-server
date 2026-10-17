@@ -17,6 +17,7 @@ export const PUBLIC_DETAILS: Record<JobEventType, readonly string[]> = {
   [JOB_EVENT_TYPE.REQUEST_STARTED]: ["visitId"],
   [JOB_EVENT_TYPE.REQUEST_COMPLETED]: ["visitId"],
   [JOB_EVENT_TYPE.REQUEST_PAID]: ["price"],
+  [JOB_EVENT_TYPE.REQUESTED_START_CHANGED]: ["from", "to"],
   [JOB_EVENT_TYPE.QUOTE_PROPOSED]: ["price", "revisedPrice", "reason"],
   [JOB_EVENT_TYPE.QUOTE_ACCEPTED]: ["price"],
   [JOB_EVENT_TYPE.QUOTE_DECLINED]: ["declinedPrice"],

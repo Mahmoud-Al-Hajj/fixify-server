@@ -8,7 +8,7 @@
 // Starts its own server on fixify_verify (never the live DB), registers a
 // fresh customer and provider, and walks: profile → intake → analysis →
 // search → slots → booking → issue card → parts → quote → names → slot
-// conflict → reschedule →
+// conflict → requested start → reschedule →
 // start → revised quote → follow-up → complete → paid → review → rating,
 // with refusals along the way. Server times are sent back unchanged.
 // Sequential; one line per step; stops at the first mismatch.
@@ -25,6 +25,7 @@ import {
 } from "../src/constants/request-status";
 import { VISIT_STATUS } from "../src/constants/visit-status";
 import { ERROR_CODE } from "../src/constants/errors";
+import { JOB_EVENT_TYPE } from "../src/constants/job-event-type";
 
 const PORT = 3101;
 const BASE = `http://localhost:${PORT}`;
@@ -485,6 +486,76 @@ async function journey(): Promise<void> {
       ["request.visits.length", 0],
     ]
   );
+
+  // The customer moves the second job to a free time; the quote stands and
+  // can then be accepted.
+  const clashReq = (suffix: string) => `/requests/${clash}${suffix}`;
+  const moveTo = (token: string, start: string) =>
+    api("POST", clashReq("/requested-start"), token, {
+      requestedStart: start,
+    });
+  await step("refused: provider changes the requested start", 403, () =>
+    moveTo(provider, firstSlot)
+  );
+  await step(
+    "refused: a requested start in the past",
+    400,
+    () => moveTo(customer, "2020-01-01T08:00:00.000"),
+    [["error.message", "requestedStart must be in the future"]]
+  );
+  await step(
+    "refused: a requested start outside working hours",
+    400,
+    () => moveTo(customer, `${firstSlot.slice(0, 10)}T22:00:00.000`),
+    [["error.message", "That time is outside the provider's working hours"]]
+  );
+  const freeStart = text(
+    list(
+      await step("slots for the second job", 200, () =>
+        api(
+          "GET",
+          `/providers/${providerId}/slots?durationMinutes=60`,
+          customer
+        )
+      ),
+      "slots"
+    )[0],
+    "start"
+  );
+  await step(
+    "customer moves the second job to a free time",
+    200,
+    () => moveTo(customer, freeStart),
+    [
+      ["request.requestedStart", freeStart],
+      ["request.priceStatus", PRICE_STATUS.PROPOSED],
+      ["request.price", "40.00"],
+    ]
+  );
+  await step(
+    "the same time again changes nothing",
+    200,
+    () => moveTo(customer, freeStart),
+    [
+      ["request.requestedStart", freeStart],
+      ["request.priceStatus", PRICE_STATUS.PROPOSED],
+    ]
+  );
+  await step(
+    "customer accepts the second job's quote",
+    200,
+    () => api("POST", clashReq("/quote/accept"), customer),
+    [["request.status", REQUEST_STATUS.SCHEDULED]]
+  );
+  await step(
+    "the second job's visit is at the new time",
+    200,
+    () => api("GET", clashReq(""), customer),
+    [["request.visits.0.scheduledStart", freeStart]]
+  );
+  await step("refused: change the requested start once scheduled", 409, () =>
+    moveTo(customer, firstSlot)
+  );
   const visit1 = text(list(detail, "request.visits")[0], "id");
   const newStart = text(
     (await slots("slots again (the visit's own slot is now busy)"))[0],
@@ -641,6 +712,22 @@ async function journey(): Promise<void> {
   ) {
     throw new SmokeFailure(
       `the feed should list only the customer's actions, unread: ${JSON.stringify(feed)}`
+    );
+  }
+  // One event for the move: the repeated time wrote none.
+  const moves = list(feed, "notifications").filter(
+    (n) =>
+      at(n, "requestId") === clash &&
+      at(n, "type") === JOB_EVENT_TYPE.REQUESTED_START_CHANGED
+  );
+  if (
+    moves.length !== 1 ||
+    at(moves[0], "actor") !== REQUEST_ACTOR_ROLE.CUSTOMER ||
+    at(moves[0], "details.from") !== firstSlot ||
+    at(moves[0], "details.to") !== freeStart
+  ) {
+    throw new SmokeFailure(
+      `the feed should show one requested start change: ${JSON.stringify(moves)}`
     );
   }
   await step(
