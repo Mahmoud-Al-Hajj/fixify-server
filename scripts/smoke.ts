@@ -529,6 +529,48 @@ async function journey(): Promise<void> {
       ["provider.rating.count", 1],
     ]
   );
+
+  // Timeline and notifications.
+  const timeline = list(
+    await step("timeline (customer)", 200, () =>
+      api("GET", req("/timeline"), customer)
+    ),
+    "timeline"
+  );
+  const types = timeline.map((e) => at(e, "type"));
+  if (
+    types[0] !== "request_created" ||
+    types[types.length - 1] !== "review_created" ||
+    JSON.stringify(timeline).includes("intakeSessionId")
+  ) {
+    throw new SmokeFailure(`timeline is wrong: ${JSON.stringify(types)}`);
+  }
+  const feed = await step("provider's notifications", 200, () =>
+    api("GET", "/notifications", provider)
+  );
+  const items = list(feed, "notifications").filter(
+    (n) => at(n, "requestId") === id
+  );
+  if (
+    items.length === 0 ||
+    items.some((n) => at(n, "actor") !== "customer") ||
+    at(items[0], "categoryName") !== "Plumber" ||
+    at(items[0], "otherPartyName") !== "Smoke customer" ||
+    Number(at(feed, "unreadCount")) < items.length
+  ) {
+    throw new SmokeFailure(
+      `the feed should list only the customer's actions, unread: ${JSON.stringify(feed)}`
+    );
+  }
+  await step(
+    "provider marks notifications read",
+    200,
+    () =>
+      api("POST", "/notifications/read", provider, {
+        readUpTo: text(list(feed, "notifications")[0], "at"),
+      }),
+    [["unreadCount", 0]]
+  );
 }
 
 async function main(): Promise<void> {

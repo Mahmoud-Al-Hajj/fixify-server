@@ -106,3 +106,101 @@ export async function listEventsForRequest(
     createdAt: formatMysqlDateTime(row.created_at),
   }));
 }
+
+// An event in a user's notification feed, with what the feed shows about its
+// request and whether it is unread for that user.
+export interface FeedEvent extends JobEvent {
+  requestId: string;
+  customerId: string;
+  providerId: string;
+  categoryName: string;
+  otherPartyName: string;
+  unread: boolean;
+}
+
+interface FeedEventRow extends JobEventRow {
+  request_id: string;
+  customer_id: string;
+  provider_id: string;
+  category_name: string;
+  other_name: string;
+  unread: number;
+}
+
+// Unread for the user `me`: after notifications_read_at, strictly; everything
+// when it is NULL. The feed's flag and the count use this same expression.
+const UNREAD = `(me.notifications_read_at IS NULL
+  OR e.created_at > me.notifications_read_at)`;
+
+// Events on the user's requests made by someone else (own actions are not
+// notifications): one branch for requests they booked, one for requests they
+// serve, joined to the other party and the category. A user is never both
+// parties of one request (booking refuses self), so the branches never
+// overlap. Served by the users and categories primary keys,
+// idx_req_customer_status / idx_req_provider_status and
+// idx_events_request_time.
+const feedBranch = (mine: string, other: string) => `
+  SELECT e.id, e.actor_user_id, e.event_type, e.payload, e.created_at,
+         e.request_id, r.customer_id, r.provider_id,
+         c.name AS category_name, other.full_name AS other_name,
+         ${UNREAD} AS unread
+  FROM users me
+  JOIN requests r ON r.${mine} = me.id
+  JOIN job_events e ON e.request_id = r.id
+  JOIN categories c ON c.id = r.category_id
+  JOIN users other ON other.id = r.${other}
+  WHERE me.id = ? AND NOT (e.actor_user_id <=> me.id)`;
+
+// The two branches are fixed strings; only the user id and the limit are
+// parameters.
+const FEED_SQL = `(${feedBranch("customer_id", "provider_id")})
+  UNION ALL
+  (${feedBranch("provider_id", "customer_id")})
+  ORDER BY created_at DESC, id DESC
+  LIMIT ?`;
+
+export async function listFeedForUser(
+  userId: string,
+  limit: number
+): Promise<FeedEvent[]> {
+  const [rows] = await pool.query<FeedEventRow[]>(FEED_SQL, [
+    userId,
+    userId,
+    limit,
+  ]);
+  return rows.map((row) => ({
+    id: row.id,
+    actorUserId: row.actor_user_id,
+    type: row.event_type,
+    payload: parsePayload(row.payload),
+    createdAt: formatMysqlDateTime(row.created_at),
+    requestId: row.request_id,
+    customerId: row.customer_id,
+    providerId: row.provider_id,
+    categoryName: row.category_name,
+    otherPartyName: row.other_name,
+    unread: Boolean(row.unread),
+  }));
+}
+
+const unreadBranch = (mine: string) => `
+  SELECT e.id
+  FROM users me
+  JOIN requests r ON r.${mine} = me.id
+  JOIN job_events e ON e.request_id = r.id
+  WHERE me.id = ? AND NOT (e.actor_user_id <=> me.id) AND ${UNREAD}`;
+
+const UNREAD_COUNT_SQL = `SELECT COUNT(*) AS unread FROM (
+  ${unreadBranch("customer_id")}
+  UNION ALL
+  ${unreadBranch("provider_id")}
+) t`;
+
+// Every unread event, not only the newest page; same filters as the feed.
+export async function countUnreadForUser(userId: string): Promise<number> {
+  const [rows] = await pool.query<Array<RowDataPacket & { unread: number }>>(
+    UNREAD_COUNT_SQL,
+    [userId, userId]
+  );
+  return Number(rows[0]?.unread ?? 0);
+}

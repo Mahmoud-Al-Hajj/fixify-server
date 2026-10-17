@@ -162,3 +162,21 @@ export async function updatePasswordAndClearResetToken(
     [passwordHash, id]
   );
 }
+
+// Marks the user's notifications read up to `upTo`, capped at MySQL's own
+// clock (a client clock that runs fast cannot mark future events read) and
+// never earlier than the stored value (a stale call cannot make read events
+// unread again). Every DATETIME here is Beirut wall-clock, as created_at is.
+export async function markNotificationsReadUpTo(
+  id: string,
+  upTo: Date
+): Promise<void> {
+  await pool.query(
+    `UPDATE users
+     SET notifications_read_at = GREATEST(
+       COALESCE(notifications_read_at, '1000-01-01'),
+       LEAST(?, CURRENT_TIMESTAMP(3)))
+     WHERE id = ?`,
+    [upTo, id]
+  );
+}

@@ -89,7 +89,13 @@ transaction, so a job never has more than one open visit.
 
 **Job event — an append-only record of every meaningful action.** Powers three features:
 the booking timeline, the audit trail, and the notification feed. Never updated, never
-deleted.
+deleted. Payloads never leave the server as stored: both reads use the public event view
+in `libraries/event-entries.ts` (`PUBLIC_DETAILS`, a whitelist per event type; `actor`
+is a role, never a user id). `GET /requests/:id/timeline` is either party's history,
+oldest first. `GET /notifications` is the newest 50 events on the user's requests made by
+someone else, with `unreadCount`; unread means `created_at > users.notifications_read_at`
+(NULL = all), one SQL expression for both. `POST /notifications/read { readUpTo }` moves
+`notifications_read_at` forward only, capped at MySQL's clock.
 
 **Request photo — the provider's job photos: `before`, `after`, or `extra`.** `kind`
 implies who uploaded it; there is no `uploaded_by` column. The customer's photos of the

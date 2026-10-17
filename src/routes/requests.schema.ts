@@ -10,8 +10,8 @@ const LOCAL_DATETIME_MESSAGE =
 // times (YYYY-MM-DDTHH:mm:ss.SSS), so any returned time can be sent back
 // unchanged. Built with Date.UTC because the mysql2 write path encodes a Date
 // through its UTC getters (see insertRequest); a Date built from local
-// components would be shifted.
-const localDateTime = z.string().transform((value, ctx) => {
+// components would be shifted. Also used by notifications.schema.ts.
+export const localDateTime = z.string().transform((value, ctx) => {
   if (LOCAL_DATETIME.test(value)) {
     // The regex allows exactly 16, 19 or 23 characters.
     const full =
