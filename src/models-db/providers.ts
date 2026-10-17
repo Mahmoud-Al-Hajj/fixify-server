@@ -33,9 +33,30 @@ interface ProviderProfileRow extends ProviderSummaryRow {
   phone: string;
 }
 
-interface CategoryRow extends RowDataPacket {
+// A search result: the provider plus their base rate for the searched trade.
+// DECIMAL comes back as a string and stays one, like requests.price.
+export interface ProviderInCategory extends ProviderSummary {
+  baseRate: string | null;
+}
+
+interface ProviderInCategoryRow extends ProviderSummaryRow {
+  base_rate: string | null;
+}
+
+// A trade the provider offers, with their "from" price for it (null = not set).
+export interface OfferedCategory extends Category {
+  baseRate: string | null;
+}
+
+export interface CategoryRate {
+  categoryId: number;
+  baseRate: string | null;
+}
+
+interface OfferedCategoryRow extends RowDataPacket {
   id: number;
   name: string;
+  base_rate: string | null;
 }
 
 function mapSummaryRow(row: ProviderSummaryRow): ProviderSummary {
@@ -54,7 +75,7 @@ function mapSummaryRow(row: ProviderSummaryRow): ProviderSummary {
 // served by fk_pc_category; the joins are on primary keys. The two variants
 // are fixed strings, never built from input.
 const ACCEPTING_IN_CATEGORY_SQL = `SELECT u.id, u.full_name, u.avatar_url, p.area,
-          p.years_experience, p.is_accepting
+          p.years_experience, p.is_accepting, pc.base_rate
    FROM provider_categories pc
    JOIN providers p ON p.id = pc.provider_id
    JOIN users u ON u.id = p.id
@@ -63,18 +84,21 @@ const ACCEPTING_IN_CATEGORY_SQL = `SELECT u.id, u.full_name, u.avatar_url, p.are
 export async function listProvidersByCategory(
   categoryId: number,
   area: string | null
-): Promise<ProviderSummary[]> {
+): Promise<ProviderInCategory[]> {
   const [rows] =
     area === null
-      ? await pool.query<ProviderSummaryRow[]>(
+      ? await pool.query<ProviderInCategoryRow[]>(
           `${ACCEPTING_IN_CATEGORY_SQL} ORDER BY u.full_name, u.id`,
           [categoryId]
         )
-      : await pool.query<ProviderSummaryRow[]>(
+      : await pool.query<ProviderInCategoryRow[]>(
           `${ACCEPTING_IN_CATEGORY_SQL} AND p.area = ? ORDER BY u.full_name, u.id`,
           [categoryId, area]
         );
-  return rows.map(mapSummaryRow);
+  return rows.map((row) => ({
+    ...mapSummaryRow(row),
+    baseRate: row.base_rate,
+  }));
 }
 
 export async function findProviderProfile(
@@ -144,41 +168,47 @@ export async function lockProviderForUpdate(
   ]);
 }
 
-// Replaces the provider's category set in one transaction. Rows for categories
-// that stay are left in place (keeping their base_rate); only removed ones are
-// deleted and only new ones inserted. The upsert makes a concurrent replace
-// that already inserted the same row harmless, without INSERT IGNORE's habit
-// of also hiding foreign-key errors.
+// Replaces the provider's category set and rates in one transaction. Removed
+// trades are deleted; the rest are upserted, so a trade that stays keeps its
+// row and takes the new rate. The upsert also makes a concurrent replace that
+// already inserted the same row harmless, without INSERT IGNORE's habit of
+// hiding foreign-key errors. The row alias form replaces VALUES(), which
+// MySQL 8.0.20+ deprecates in ON DUPLICATE KEY UPDATE.
 export async function replaceProviderCategories(
   conn: PoolConnection,
   providerId: string,
-  categoryIds: readonly number[]
+  categories: readonly CategoryRate[]
 ): Promise<void> {
   await conn.query(
     `DELETE FROM provider_categories
      WHERE provider_id = ? AND category_id NOT IN (?)`,
-    [providerId, categoryIds]
+    [providerId, categories.map((c) => c.categoryId)]
   );
   await conn.query(
-    `INSERT INTO provider_categories (provider_id, category_id) VALUES ?
-     ON DUPLICATE KEY UPDATE category_id = category_id`,
-    [categoryIds.map((categoryId) => [providerId, categoryId])]
+    `INSERT INTO provider_categories (provider_id, category_id, base_rate)
+     VALUES ? AS new
+     ON DUPLICATE KEY UPDATE base_rate = new.base_rate`,
+    [categories.map((c) => [providerId, c.categoryId, c.baseRate])]
   );
 }
 
 // Served by the provider_categories primary key (provider_id, category_id).
 export async function listCategoriesForProvider(
   providerId: string
-): Promise<Category[]> {
-  const [rows] = await pool.query<CategoryRow[]>(
-    `SELECT c.id, c.name
+): Promise<OfferedCategory[]> {
+  const [rows] = await pool.query<OfferedCategoryRow[]>(
+    `SELECT c.id, c.name, pc.base_rate
      FROM provider_categories pc
      JOIN categories c ON c.id = pc.category_id
      WHERE pc.provider_id = ?
      ORDER BY c.name`,
     [providerId]
   );
-  return rows.map((row) => ({ id: row.id, name: row.name }));
+  return rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    baseRate: row.base_rate,
+  }));
 }
 
 export async function insertProvider(

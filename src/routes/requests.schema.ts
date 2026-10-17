@@ -103,8 +103,9 @@ export const listRequestsQuerySchema = z.strictObject({
 export type ListRequestsQuery = z.infer<typeof listRequestsQuerySchema>;
 
 // DECIMAL(10,2) carried as a string end to end, never parsed to a number. The
-// digit limits cap it at 99999999.99; the second check rejects zero.
-const PRICE = /^\d{1,8}(\.\d{1,2})?$/;
+// digit limits cap it at 99999999.99; the second check rejects zero. Also the
+// shape of a provider's base rate (providers.schema.ts).
+export const PRICE = /^\d{1,8}(\.\d{1,2})?$/;
 
 export const proposeQuoteSchema = z.object({
   price: z

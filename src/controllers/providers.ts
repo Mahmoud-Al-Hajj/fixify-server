@@ -17,17 +17,21 @@ export async function listProvidersHandler(
   res: Response<unknown, QueryLocals<ListProvidersQuery>>
 ): Promise<void> {
   requireUser(req);
-  const { categoryId, area, durationMinutes } = res.locals.query;
+  const { categoryId, area, durationMinutes, sort } = res.locals.query;
   const matches = await providersService.listProvidersByCategory(
     categoryId,
     area ?? null,
-    durationMinutes
+    durationMinutes,
+    sort
   );
-  const providers = matches.map(({ provider, rating, earliestSlot }) => ({
-    ...provider,
-    rating,
-    earliestSlot,
-  }));
+  const providers = matches.map(
+    ({ provider, baseRate, rating, earliestSlot }) => ({
+      ...provider,
+      baseRate,
+      rating,
+      earliestSlot,
+    })
+  );
   res.status(200).json({ providers });
 }
 
@@ -88,10 +92,10 @@ export async function replaceOwnCategoriesHandler(
   res: Response
 ): Promise<void> {
   const user = requireUser(req);
-  const { categoryIds } = req.body as ReplaceOwnCategoriesBody;
+  const { categories: rates } = req.body as ReplaceOwnCategoriesBody;
   const categories = await providersService.replaceOwnCategories(
     user.id,
-    categoryIds
+    rates
   );
   res.status(200).json({ categories });
 }

@@ -72,7 +72,12 @@ export async function register(
           bio: input.becomeProvider.bio ?? null,
           yearsExperience: input.becomeProvider.yearsExperience ?? null,
         });
-        await replaceProviderCategories(conn, id, categoryIds);
+        // Sign-up sets trades only; rates are set later (PUT /providers/me/categories).
+        await replaceProviderCategories(
+          conn,
+          id,
+          categoryIds.map((categoryId) => ({ categoryId, baseRate: null }))
+        );
       }
     });
   } catch (err) {

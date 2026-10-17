@@ -24,17 +24,19 @@ INSERT INTO providers (id, bio, years_experience, area, is_accepting) VALUES
   ('00000000-0000-4000-8000-000000000105', 'Washing machines, fridges and ovens.',             7, 'Achrafieh', 1),
   ('00000000-0000-4000-8000-000000000106', 'Plumbing and small electrical jobs.',              4, 'Verdun',    0);
 
-INSERT INTO provider_categories (provider_id, category_id)
-SELECT p.id, c.id
+-- base_rate: the "from" price per trade. Maya leaves her Electrician rate
+-- unset, so an Electrician search sorted by price shows "no rate -> last".
+INSERT INTO provider_categories (provider_id, category_id, base_rate)
+SELECT p.id, c.id, p.base_rate
 FROM (
-  SELECT '00000000-0000-4000-8000-000000000101' AS id, 'Electrician' AS name
-  UNION ALL SELECT '00000000-0000-4000-8000-000000000102', 'Electrician'
-  UNION ALL SELECT '00000000-0000-4000-8000-000000000102', 'Generator & Solar'
-  UNION ALL SELECT '00000000-0000-4000-8000-000000000103', 'Plumber'
-  UNION ALL SELECT '00000000-0000-4000-8000-000000000104', 'AC & Refrigeration'
-  UNION ALL SELECT '00000000-0000-4000-8000-000000000105', 'Appliance Repair'
-  UNION ALL SELECT '00000000-0000-4000-8000-000000000106', 'Plumber'
-  UNION ALL SELECT '00000000-0000-4000-8000-000000000106', 'Electrician'
+  SELECT '00000000-0000-4000-8000-000000000101' AS id, 'Electrician' AS name, 25.00 AS base_rate
+  UNION ALL SELECT '00000000-0000-4000-8000-000000000102', 'Electrician', NULL
+  UNION ALL SELECT '00000000-0000-4000-8000-000000000102', 'Generator & Solar', 45.00
+  UNION ALL SELECT '00000000-0000-4000-8000-000000000103', 'Plumber', 35.00
+  UNION ALL SELECT '00000000-0000-4000-8000-000000000104', 'AC & Refrigeration', 40.00
+  UNION ALL SELECT '00000000-0000-4000-8000-000000000105', 'Appliance Repair', 30.00
+  UNION ALL SELECT '00000000-0000-4000-8000-000000000106', 'Plumber', 30.00
+  UNION ALL SELECT '00000000-0000-4000-8000-000000000106', 'Electrician', 20.00
 ) AS p
 JOIN categories c ON c.name = p.name;
 

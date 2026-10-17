@@ -605,8 +605,12 @@ Rules, all load-bearing:
 ### Provider matching is not an AI call
 
 The diagnosis supplies the inputs; ranking is a deterministic SQL query: providers who
-offer the diagnosed category in the customer's area and have `is_accepting = 1`, ordered
-by rating and by earliest slot long enough for the estimated duration. Do not send the
+offer the diagnosed category in the customer's area and have `is_accepting = 1`, in the
+order `sort` asks for (`libraries/provider-ranking.ts`): `rating` (the default: rating,
+then earliest slot long enough for the estimated duration), `price` (the trade's base
+rate, unset last, then rating), or `availability` (earliest slot, fully booked last, then
+rating). The base rate (`provider_categories.base_rate`) is a per-trade "from" price for
+display, set with `PUT /providers/me/categories`; it is never a quote. Do not send the
 provider list to the model or ask it to rank or choose providers.
 
 ### Slots are deterministic
@@ -755,8 +759,8 @@ route. Demo data for the presentation belongs there.
 
 The request state machine, the quote rules (`libraries/quote-rules.ts`) and the
 reschedule rules (`libraries/visit-rules.ts`) are expected to have unit tests, and so are
-slot generation and `fitsWorkingHours` (`libraries/slot-rules.ts`) and the
-booking-from-session derivations
+slot generation and `fitsWorkingHours` (`libraries/slot-rules.ts`), the search order
+(`sortMatches`, `libraries/provider-ranking.ts`) and the booking-from-session derivations
 (`deriveBookingFields`, `buildDescription`). Other test suites are added on request, not
 by default.
 

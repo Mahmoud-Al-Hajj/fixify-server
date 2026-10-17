@@ -12,6 +12,8 @@ import {
   type ProviderSummary,
   type ProviderProfile,
   type ProviderProfileChanges,
+  type OfferedCategory,
+  type CategoryRate,
 } from "../models-db/providers";
 import { findCategoryIds } from "../models-db/categories";
 import { listOpenVisitsForProviders } from "../models-db/visits";
@@ -23,7 +25,8 @@ import {
   type RatingSummary,
   type Review,
 } from "../models-db/reviews";
-import type { Category } from "../models-db/categories";
+import type { ProviderSort } from "../constants/provider-sort";
+import { sortMatches } from "./provider-ranking";
 import {
   NotFoundError,
   ForbiddenError,
@@ -41,6 +44,8 @@ export interface Slot {
 
 export interface ProviderMatch {
   provider: ProviderSummary;
+  // The provider's "from" price for the searched trade.
+  baseRate: string | null;
   rating: RatingSummary;
   earliestSlot: string | null;
 }
@@ -86,13 +91,14 @@ async function slotsForProviders(
 }
 
 // Deterministic matching (no AI): accepting providers in the category (and
-// area), best rated first, then by their first suggested slot, so the list
-// agrees with GET /providers/:id/slots. A category with no providers is an
-// empty list, not an error.
+// area), in the order `sort` asks for (provider-ranking.ts). earliestSlot is
+// the first suggested slot, so the list agrees with GET /providers/:id/slots.
+// A category with no providers is an empty list, not an error.
 export async function listProvidersByCategory(
   categoryId: number,
   area: string | null,
-  durationMinutes: number
+  durationMinutes: number,
+  sort: ProviderSort
 ): Promise<ProviderMatch[]> {
   const providers = await listProvidersByCategoryModel(categoryId, area);
   const ids = providers.map((provider) => provider.id);
@@ -100,17 +106,13 @@ export async function listProvidersByCategory(
     findRatingSummariesForProviders(ids),
     slotsForProviders(ids, durationMinutes),
   ]);
-  const matches = providers.map((provider) => ({
+  const matches = providers.map(({ baseRate, ...provider }) => ({
     provider,
+    baseRate,
     rating: ratings.get(provider.id) ?? NO_RATINGS,
     earliestSlot: slots.get(provider.id)?.[0]?.start ?? null,
   }));
-  // Unrated and fully booked providers go last; ties keep name order.
-  return matches.sort(
-    (a, b) =>
-      (b.rating.average ?? -1) - (a.rating.average ?? -1) ||
-      (a.earliestSlot ?? "~").localeCompare(b.earliestSlot ?? "~")
-  );
+  return sortMatches(matches, sort);
 }
 
 export async function getProviderSlots(
@@ -134,7 +136,7 @@ export async function getProviderSlots(
 
 export interface ProviderProfileDetails {
   profile: ProviderProfile;
-  categories: Category[];
+  categories: OfferedCategory[];
   rating: RatingSummary;
   reviews: Review[];
   availability: WeeklyHours[];
@@ -185,22 +187,23 @@ export async function updateOwnProviderProfile(
   return getProviderProfile(userId);
 }
 
+// The ids are unique already (checked at the edge).
 export async function replaceOwnCategories(
   userId: string,
-  categoryIds: readonly number[]
-): Promise<Category[]> {
+  categories: readonly CategoryRate[]
+): Promise<OfferedCategory[]> {
   await assertIsProvider(userId, "edit offered categories");
 
-  const uniqueIds = [...new Set(categoryIds)];
-  const knownIds = await findCategoryIds(uniqueIds);
-  const unknown = uniqueIds.filter((id) => !knownIds.includes(id));
+  const ids = categories.map((category) => category.categoryId);
+  const knownIds = await findCategoryIds(ids);
+  const unknown = ids.filter((id) => !knownIds.includes(id));
   if (unknown.length > 0) {
     throw new ValidationError(`Unknown category id(s): ${unknown.join(", ")}`);
   }
 
   await withTransaction(async (conn) => {
     await lockProviderForUpdate(conn, userId);
-    await replaceProviderCategories(conn, userId, uniqueIds);
+    await replaceProviderCategories(conn, userId, categories);
   });
 
   return listCategoriesForProvider(userId);

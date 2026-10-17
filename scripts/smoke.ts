@@ -191,10 +191,14 @@ async function journey(): Promise<void> {
       isAccepting: true,
     })
   );
-  await step("provider categories", 200, () =>
-    api("PUT", "/providers/me/categories", provider, {
-      categoryIds: [plumberId],
-    })
+  await step(
+    "provider categories with a base rate",
+    200,
+    () =>
+      api("PUT", "/providers/me/categories", provider, {
+        categories: [{ categoryId: plumberId, baseRate: "30" }],
+      }),
+    [["categories.0.baseRate", "30.00"]]
   );
   await step("provider working hours (every day 07:00-21:00)", 200, () =>
     api("PUT", "/providers/me/availability", provider, {
@@ -275,9 +279,46 @@ async function journey(): Promise<void> {
     ),
     "providers"
   );
-  if (!found.some((p) => at(p, "id") === providerId)) {
-    throw new SmokeFailure("our provider is not in the search results");
+  const ours = found.find((p) => at(p, "id") === providerId);
+  if (at(ours, "baseRate") !== "30.00") {
+    throw new SmokeFailure(
+      `our provider is missing or has the wrong base rate: ${JSON.stringify(ours)}`
+    );
   }
+  // Each sort keeps its key in order, with missing values last.
+  const search = (sort: string) =>
+    api(
+      "GET",
+      `/providers?categoryId=${String(categoryId)}&durationMinutes=${duration}&sort=${sort}`,
+      customer
+    );
+  const inOrder = (values: unknown[], numeric: boolean) => {
+    const present = values.filter((v) => v !== null);
+    const sorted = [...present].sort((a, b) =>
+      numeric ? Number(a) - Number(b) : String(a) < String(b) ? -1 : 1
+    );
+    return JSON.stringify(present) === JSON.stringify(sorted);
+  };
+  for (const [sort, key, numeric] of [
+    ["price", "baseRate", true],
+    ["availability", "earliestSlot", false],
+  ] as const) {
+    const sorted = list(
+      await step(`providers sorted by ${sort}`, 200, () => search(sort)),
+      "providers"
+    );
+    const values = sorted.map((p) => at(p, key));
+    const firstNull = values.indexOf(null);
+    if (
+      !inOrder(values, numeric) ||
+      (firstNull !== -1 && values.slice(firstNull).some((v) => v !== null))
+    ) {
+      throw new SmokeFailure(
+        `${sort} order is wrong: ${JSON.stringify(values)}`
+      );
+    }
+  }
+  await step("refused: an unknown sort", 400, () => search("cheapest"));
   const slots = async (label: string) =>
     list(
       await step(label, 200, () =>
