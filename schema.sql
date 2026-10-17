@@ -274,6 +274,14 @@ INSERT INTO categories (name) VALUES
   ('Moving & Delivery'), ('Pest Control'), ('Welding & Metalwork');
 
 
+-- One of the 26 districts (DISTRICT_NAMES in src/constants/districts.ts).
+ALTER TABLE providers
+  ADD CONSTRAINT chk_providers_area CHECK (area IS NULL OR area IN (
+    'Beirut', 'Akkar', 'Baalbek', 'Hermel', 'Rashaya', 'West Bekaa', 'Zahle',
+    'Jbeil', 'Keserwan', 'Aley', 'Baabda', 'Chouf', 'Metn', 'Bint Jbeil',
+    'Hasbaya', 'Marjeyoun', 'Nabatieh', 'Batroun', 'Bsharri', 'Koura',
+    'Minieh-Danniyeh', 'Tripoli', 'Zgharta', 'Jezzine', 'Sidon', 'Tyre'));
+
 ALTER TABLE provider_categories
   ADD CONSTRAINT chk_pc_base_rate
     CHECK (base_rate IS NULL OR base_rate >= 0);

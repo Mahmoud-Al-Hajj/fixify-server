@@ -17,12 +17,12 @@ INSERT INTO users (id, full_name, email, phone, password_hash) VALUES
   ('00000000-0000-4000-8000-000000000106', 'Sami Karam',    'sami@demo.fixify',   '+961 3 200 106', @pw);
 
 INSERT INTO providers (id, bio, years_experience, area, is_accepting) VALUES
-  ('00000000-0000-4000-8000-000000000101', 'Residential wiring, panels and fault finding.', 12, 'Hamra',     1),
-  ('00000000-0000-4000-8000-000000000102', 'Electrical repairs and generator hookups.',      6, 'Achrafieh', 1),
-  ('00000000-0000-4000-8000-000000000103', 'Leaks, water heaters and bathroom plumbing.',     15, 'Hamra',     1),
-  ('00000000-0000-4000-8000-000000000104', 'Split AC servicing, gas top-ups and repairs.',     9, 'Jounieh',   1),
-  ('00000000-0000-4000-8000-000000000105', 'Washing machines, fridges and ovens.',             7, 'Achrafieh', 1),
-  ('00000000-0000-4000-8000-000000000106', 'Plumbing and small electrical jobs.',              4, 'Verdun',    0);
+  ('00000000-0000-4000-8000-000000000101', 'Residential wiring, panels and fault finding.', 12, 'Beirut',   1),
+  ('00000000-0000-4000-8000-000000000102', 'Electrical repairs and generator hookups.',      6, 'Beirut',   1),
+  ('00000000-0000-4000-8000-000000000103', 'Leaks, water heaters and bathroom plumbing.',     15, 'Beirut',   1),
+  ('00000000-0000-4000-8000-000000000104', 'Split AC servicing, gas top-ups and repairs.',     9, 'Keserwan', 1),
+  ('00000000-0000-4000-8000-000000000105', 'Washing machines, fridges and ovens.',             7, 'Beirut',   1),
+  ('00000000-0000-4000-8000-000000000106', 'Plumbing and small electrical jobs.',              4, 'Beirut',   0);
 
 -- base_rate: the "from" price per trade. Maya leaves her Electrician rate
 -- unset, so an Electrician search sorted by price shows "no rate -> last".

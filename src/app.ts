@@ -6,6 +6,7 @@ import { requestId } from "./middlewares/request-id";
 import { notFoundHandler } from "./middlewares/not-found";
 import { errorHandler } from "./middlewares/error-handler";
 import { categoriesRouter } from "./routes/categories";
+import { districtsRouter } from "./routes/districts";
 import { authRouter } from "./routes/auth";
 import { requestsRouter } from "./routes/requests";
 import { providersRouter } from "./routes/providers";
@@ -35,6 +36,7 @@ app.get("/health", (_req, res) => {
 
 // Feature routes
 app.use("/categories", categoriesRouter);
+app.use("/districts", districtsRouter);
 app.use("/auth", authRouter);
 app.use("/requests", requestsRouter);
 app.use("/providers", providersRouter);

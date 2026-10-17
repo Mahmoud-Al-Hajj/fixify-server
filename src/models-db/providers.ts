@@ -71,7 +71,7 @@ function mapSummaryRow(row: ProviderSummaryRow): ProviderSummary {
 }
 
 // Providers who offer the category and are accepting jobs, optionally only in
-// one area (exact match; providers.area is plain text). pc.category_id is
+// one district (DISTRICT_NAMES, held by chk_providers_area). pc.category_id is
 // served by fk_pc_category; the joins are on primary keys. The two variants
 // are fixed strings, never built from input.
 const ACCEPTING_IN_CATEGORY_SQL = `SELECT u.id, u.full_name, u.avatar_url, p.area,

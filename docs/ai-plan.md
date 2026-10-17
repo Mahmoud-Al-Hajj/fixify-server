@@ -410,6 +410,7 @@ Whether the SDK can cancel a call halfway doesn't matter. If the timeout fires, 
 - **Check first** how the existing search currently takes `area`.
 - **Clean up existing `providers.area` values:** map recognisable ones to districts and set the rest to `NULL` (those providers pick again).
 - **Client:** the customer picks an area once. The app remembers it locally (no schema change) and pre-selects it.
+- **Built** (2026-10-17): `DISTRICT_NAMES` (26: Wikipedia's "Districts of Lebanon", in common local spelling), `GET /districts`, and `chk_providers_area` in migration 007, which mapped Hamra, Achrafieh and Verdun to Beirut and Jounieh to Keserwan.
 
 ---
 

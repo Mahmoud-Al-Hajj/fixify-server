@@ -26,7 +26,7 @@ const PORT = 3101;
 const BASE = `http://localhost:${PORT}`;
 const PHOTO = "fixtures/diagnosis/photos/sink-leak.jpg";
 const PASSWORD = "Smoke1234!";
-const AREA = "Hamra";
+const AREA = "Beirut";
 
 const { values: args } = parseArgs({
   options: { "live-ai": { type: "boolean", default: false } },

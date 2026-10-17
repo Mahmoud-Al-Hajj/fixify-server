@@ -2,6 +2,7 @@ import { z } from "zod";
 import { requireAtLeastOneField } from "./partial-update.schema";
 import { DEFAULT_VISIT_MINUTES } from "../constants/booking";
 import { PROVIDER_SORT } from "../constants/provider-sort";
+import { DISTRICT_NAMES } from "../constants/districts";
 import { PRICE } from "./requests.schema";
 
 // Strict, like listRequestsQuerySchema: an unsupported filter must fail loudly
@@ -22,7 +23,9 @@ export const listProvidersQuerySchema = z.strictObject({
     .regex(/^\d+$/, "Expected a positive whole number")
     .transform(Number)
     .pipe(z.number().int().positive().max(65535)),
-  area: z.string().trim().min(1).max(80).optional(),
+  // One of the fixed districts; searching an unknown one is a 400, not an
+  // empty list.
+  area: z.enum(DISTRICT_NAMES).optional(),
   durationMinutes,
   sort: z.enum(PROVIDER_SORT).default(PROVIDER_SORT.RATING),
 });
@@ -38,7 +41,7 @@ export const updateOwnProviderSchema = requireAtLeastOneField(
     isAccepting: z.boolean().optional(),
     bio: z.string().trim().min(1).max(1000).nullable().optional(),
     yearsExperience: z.number().int().min(0).max(70).nullable().optional(),
-    area: z.string().trim().min(1).max(80).nullable().optional(),
+    area: z.enum(DISTRICT_NAMES).nullable().optional(),
   })
 );
 export type UpdateOwnProviderBody = z.infer<typeof updateOwnProviderSchema>;

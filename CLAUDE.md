@@ -575,8 +575,11 @@ Rules, all load-bearing:
 - **Startup sweep:** once at startup, before accepting requests:
   `UPDATE intake_sessions SET ai_status = 'failed' WHERE ai_status = 'pending'`, with no
   time condition. It assumes one server process runs analyses.
-- **Areas:** `providers.area` and the search `area` parameter are validated against a
-  fixed list of Lebanon's districts plus Beirut, kept in `src/constants/` (not added yet).
+- **Areas:** `providers.area` and the search `area` parameter are validated against
+  `DISTRICT_NAMES` (`src/constants/districts.ts`): Lebanon's 25 districts plus Beirut,
+  in common local spelling, served to the app by `GET /districts`. `chk_providers_area`
+  (migration 007) holds the same list; a unit test keeps `schema.sql` and the constant
+  in step.
 - **Booking from a session:** allowed from any `ai_status`; the session needs at least one
   customer message with text. The client never sends service type, duration or
   description. The server derives them at booking time:
