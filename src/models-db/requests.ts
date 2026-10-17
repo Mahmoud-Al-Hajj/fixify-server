@@ -5,7 +5,11 @@ import type {
 } from "mysql2/promise";
 import { pool, isDbError } from "./pool";
 import { formatMysqlDateTime } from "./format-datetime";
-import type { RequestStatus } from "../constants/request-status";
+import {
+  REQUEST_ACTOR_ROLE,
+  type RequestActorRole,
+  type RequestStatus,
+} from "../constants/request-status";
 import { ConflictError, ERROR_CODE } from "../constants/errors";
 import type { ServiceType } from "../constants/service-type";
 import { PRICE_STATUS, type PriceStatus } from "../constants/price-status";
@@ -96,6 +100,38 @@ function mapRow(row: RequestRow): Request {
     respondedAt: formatMysqlDateTime(row.responded_at),
     completedAt: formatMysqlDateTime(row.completed_at),
   };
+}
+
+// What the reads show a party about the request: the category's name and the
+// other party's full name, the same values as the notification feed. No
+// contact detail beyond providerPhone above.
+export interface RequestNames {
+  categoryName: string;
+  otherPartyName: string;
+}
+
+export type NamedRequest = Request & RequestNames;
+
+interface RequestNamesRow extends RowDataPacket {
+  category_name: string;
+  other_name: string;
+}
+
+// The other party's column for each viewer: the only strings put into the
+// names SQL.
+const OTHER_PARTY_COLUMN = {
+  [REQUEST_ACTOR_ROLE.CUSTOMER]: "provider_id",
+  [REQUEST_ACTOR_ROLE.PROVIDER]: "customer_id",
+} as const;
+
+// Both are looked up by primary key for each row.
+const nameColumns = (viewer: RequestActorRole) => `
+  (SELECT name FROM categories WHERE categories.id = requests.category_id) AS category_name,
+  (SELECT full_name FROM users WHERE users.id = requests.${OTHER_PARTY_COLUMN[viewer]}) AS other_name
+`;
+
+function mapNames(row: RequestNamesRow): RequestNames {
+  return { categoryName: row.category_name, otherPartyName: row.other_name };
 }
 
 export interface InsertRequestInput {
@@ -322,24 +358,41 @@ export async function findRequestById(id: string): Promise<Request | null> {
   return row ? mapRow(row) : null;
 }
 
+// The names for one request as the viewer sees them; null if it is gone.
+export async function findRequestNames(
+  id: string,
+  viewer: RequestActorRole
+): Promise<RequestNames | null> {
+  const [rows] = await pool.query<RequestNamesRow[]>(
+    `SELECT ${nameColumns(viewer)} FROM requests WHERE id = ?`,
+    [id]
+  );
+  const row = rows[0];
+  return row ? mapNames(row) : null;
+}
+
+type NamedRequestRow = RequestRow & RequestNamesRow;
+
 export async function listRequestsForCustomer(
   customerId: string
-): Promise<Request[]> {
-  const [rows] = await pool.query<RequestRow[]>(
-    `SELECT ${REQUEST_COLUMNS} FROM requests
+): Promise<NamedRequest[]> {
+  const [rows] = await pool.query<NamedRequestRow[]>(
+    `SELECT ${REQUEST_COLUMNS}, ${nameColumns(REQUEST_ACTOR_ROLE.CUSTOMER)}
+     FROM requests
      WHERE customer_id = ? ORDER BY created_at DESC`,
     [customerId]
   );
-  return rows.map(mapRow);
+  return rows.map((row) => ({ ...mapRow(row), ...mapNames(row) }));
 }
 
 export async function listRequestsForProvider(
   providerId: string
-): Promise<Request[]> {
-  const [rows] = await pool.query<RequestRow[]>(
-    `SELECT ${REQUEST_COLUMNS} FROM requests
+): Promise<NamedRequest[]> {
+  const [rows] = await pool.query<NamedRequestRow[]>(
+    `SELECT ${REQUEST_COLUMNS}, ${nameColumns(REQUEST_ACTOR_ROLE.PROVIDER)}
+     FROM requests
      WHERE provider_id = ? ORDER BY created_at DESC`,
     [providerId]
   );
-  return rows.map(mapRow);
+  return rows.map((row) => ({ ...mapRow(row), ...mapNames(row) }));
 }

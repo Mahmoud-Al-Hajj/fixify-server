@@ -7,7 +7,8 @@
 //
 // Starts its own server on fixify_verify (never the live DB), registers a
 // fresh customer and provider, and walks: profile → intake → analysis →
-// search → slots → booking → issue card → parts → quote → reschedule →
+// search → slots → booking → issue card → parts → quote → names → slot
+// conflict → reschedule →
 // start → revised quote → follow-up → complete → paid → review → rating,
 // with refusals along the way. Server times are sent back unchanged.
 // Sequential; one line per step; stops at the first mismatch.
@@ -18,7 +19,10 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { AI_STATUS } from "../src/constants/ai-status";
 import { PRICE_STATUS } from "../src/constants/price-status";
-import { REQUEST_STATUS } from "../src/constants/request-status";
+import {
+  REQUEST_ACTOR_ROLE,
+  REQUEST_STATUS,
+} from "../src/constants/request-status";
 import { VISIT_STATUS } from "../src/constants/visit-status";
 import { ERROR_CODE } from "../src/constants/errors";
 
@@ -405,8 +409,81 @@ async function journey(): Promise<void> {
   await step("refused: review before completion", 409, () =>
     api("POST", req("/review"), customer, { rating: 5, comment: null })
   );
-  const detail = await step("request with its visit", 200, () =>
-    api("GET", req(""), customer)
+
+  // Each party sees the trade and the other party's name.
+  for (const [role, token, otherName] of [
+    [REQUEST_ACTOR_ROLE.CUSTOMER, customer, "Smoke provider"],
+    [REQUEST_ACTOR_ROLE.PROVIDER, provider, "Smoke customer"],
+  ] as const) {
+    const listed = list(
+      await step(`requests list (${role})`, 200, () =>
+        api("GET", `/requests?role=${role}`, token)
+      ),
+      "requests"
+    ).find((r) => at(r, "id") === id);
+    if (
+      at(listed, "categoryName") !== "Plumber" ||
+      at(listed, "otherPartyName") !== otherName ||
+      at(listed, "providerPhone") !== "+961 3 999 002"
+    ) {
+      throw new SmokeFailure(
+        `the ${role} list shows the wrong names: ${JSON.stringify(listed)}`
+      );
+    }
+  }
+  await step(
+    "request detail (provider)",
+    200,
+    () => api("GET", req(""), provider),
+    [
+      ["request.categoryName", "Plumber"],
+      ["request.otherPartyName", "Smoke customer"],
+    ]
+  );
+  const detail = await step(
+    "request with its visit",
+    200,
+    () => api("GET", req(""), customer),
+    [
+      ["request.categoryName", "Plumber"],
+      ["request.otherPartyName", "Smoke provider"],
+    ]
+  );
+
+  // The slot is taken: a second job at the same time can be quoted, but its
+  // quote cannot be accepted, and the job stays as it was.
+  const clash = text(
+    await step("book a second job at the same time (search)", 201, () =>
+      api("POST", "/requests", customer, {
+        providerId,
+        categoryId,
+        addressText: "Hamra, smoke test",
+        requestedStart: firstSlot,
+        description: "Dripping bathroom tap",
+        estimatedDurationMinutes: 60,
+      })
+    ),
+    "request.id"
+  );
+  await step("provider quotes the second job", 200, () =>
+    api("POST", `/requests/${clash}/quote`, provider, { price: "40.00" })
+  );
+  const taken = await step("refused: accept while the slot is taken", 409, () =>
+    api("POST", `/requests/${clash}/quote/accept`, customer)
+  );
+  if (!text(taken, "error.message").endsWith("Please choose another time.")) {
+    throw new SmokeFailure(`not the slot conflict: ${JSON.stringify(taken)}`);
+  }
+  await step(
+    "the second job is unchanged",
+    200,
+    () => api("GET", `/requests/${clash}`, customer),
+    [
+      ["request.status", REQUEST_STATUS.PENDING],
+      ["request.priceStatus", PRICE_STATUS.PROPOSED],
+      ["request.requestedStart", firstSlot],
+      ["request.visits.length", 0],
+    ]
   );
   const visit1 = text(list(detail, "request.visits")[0], "id");
   const newStart = text(
@@ -420,7 +497,10 @@ async function journey(): Promise<void> {
       api("POST", req(`/visits/${visit1}/reschedule`), customer, {
         start: newStart,
       }),
-    [["request.visits.0.proposedBy", "customer"]]
+    [
+      ["request.visits.0.proposedBy", "customer"],
+      ["request.otherPartyName", "Smoke provider"],
+    ]
   );
   await step(
     "provider accepts the new time",
@@ -429,6 +509,7 @@ async function journey(): Promise<void> {
     [
       ["request.visits.0.scheduledStart", newStart],
       ["request.visits.0.proposedStart", null],
+      ["request.otherPartyName", "Smoke customer"],
     ]
   );
 

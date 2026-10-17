@@ -10,7 +10,9 @@ import {
   withdrawPendingRevision,
   listRequestsForCustomer as listRequestsForCustomerModel,
   listRequestsForProvider as listRequestsForProviderModel,
+  findRequestNames,
   type Request,
+  type NamedRequest,
   type InsertRequestInput,
 } from "../models-db/requests";
 import {
@@ -274,11 +276,22 @@ export async function loadRequestForActor(
 export async function getRequestForActor(
   requestId: string,
   actorUserId: string
-): Promise<{ request: Request; visits: Visit[]; hasReview: boolean }> {
-  const { request } = await loadRequestForActor(requestId, actorUserId);
+): Promise<{ request: NamedRequest; visits: Visit[]; hasReview: boolean }> {
+  const { request, actorRole } = await loadRequestForActor(
+    requestId,
+    actorUserId
+  );
+  const names = await findRequestNames(request.id, actorRole);
+  if (!names) {
+    throw new NotFoundError("Request not found");
+  }
   const visits = await findVisitsForRequest(request.id);
   const review = await findReviewForRequest(request.id);
-  return { request, visits, hasReview: review !== null };
+  return {
+    request: { ...request, ...names },
+    visits,
+    hasReview: review !== null,
+  };
 }
 
 // The job's history for either party, oldest first, in its public shape: no
@@ -432,9 +445,9 @@ export async function saveRequestItems(
   return listRequestItems(request.id);
 }
 
-async function attachNextVisits(
-  requests: Request[]
-): Promise<Array<{ request: Request; nextVisit: Visit | null }>> {
+async function attachNextVisits<T extends Request>(
+  requests: T[]
+): Promise<Array<{ request: T; nextVisit: Visit | null }>> {
   const openVisits = await findOpenVisitsForRequests(
     requests.map((request) => request.id),
     OPEN_VISIT_STATUSES
@@ -755,12 +768,12 @@ export async function markRequestPaid(
 
 export async function listRequestsForCustomer(
   customerId: string
-): Promise<Array<{ request: Request; nextVisit: Visit | null }>> {
+): Promise<Array<{ request: NamedRequest; nextVisit: Visit | null }>> {
   return attachNextVisits(await listRequestsForCustomerModel(customerId));
 }
 
 export async function listRequestsForProvider(
   providerId: string
-): Promise<Array<{ request: Request; nextVisit: Visit | null }>> {
+): Promise<Array<{ request: NamedRequest; nextVisit: Visit | null }>> {
   return attachNextVisits(await listRequestsForProviderModel(providerId));
 }
