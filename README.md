@@ -14,3 +14,7 @@ Get-Content scripts/seed-demo.sql -Raw | mysql -u root -p fixify
 
 `schema.sql` does not create or select a database, so it only ever loads into
 the one named on the command line.
+
+If startup logs `ECONNREFUSED`, MySQL is not running: start the `MySQL91`
+service from an admin PowerShell (`Start-Service MySQL91`), or set it to start
+automatically (`Set-Service MySQL91 -StartupType Automatic`).

@@ -25,9 +25,29 @@ async function start(): Promise<void> {
   });
 }
 
-start().catch((err) => {
-  logger.error("failed to start", {
-    error: err instanceof Error ? err.message : String(err),
-  });
+// A refused connection to "localhost" is an AggregateError (Node tries ::1 and
+// 127.0.0.1) with an empty message; its inner errors carry the cause.
+function startupError(err: unknown): { error: string; code?: string } {
+  const code =
+    err instanceof Error && "code" in err ? String(err.code) : undefined;
+  const causes =
+    err instanceof AggregateError
+      ? err.errors
+          .map((inner: unknown) =>
+            inner instanceof Error ? inner.message : String(inner)
+          )
+          .join("; ")
+      : err instanceof Error
+        ? err.message
+        : String(err);
+  const hint =
+    code === "ECONNREFUSED"
+      ? ` (is MySQL running at ${env.db.host}:${env.db.port}?)`
+      : "";
+  return { error: causes + hint, ...(code ? { code } : {}) };
+}
+
+start().catch((err: unknown) => {
+  logger.error("failed to start", startupError(err));
   process.exit(1);
 });
