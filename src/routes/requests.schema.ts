@@ -56,14 +56,12 @@ const bookingBase = {
 };
 
 // Plain category search: the client describes the job itself. Not strict, as
-// before, but a session id must not be silently stripped: that would book
-// without the session.
+// before. It never sees an intakeSessionId: that key selects the other shape.
 const fromSearchSchema = z.object({
   ...bookingBase,
   serviceType: z.enum(SERVICE_TYPE).nullable().default(null),
   description: z.string().trim().min(1).max(2000),
   estimatedDurationMinutes: z.number().int().min(15).max(1440),
-  intakeSessionId: z.never().optional(),
 });
 
 // Booked from an intake session: the server derives service type, duration
@@ -73,10 +71,28 @@ const fromSessionSchema = z.strictObject({
   intakeSessionId: z.uuid(),
 });
 
-export const createRequestSchema = z.union([
-  fromSessionSchema,
-  fromSearchSchema,
-]);
+// Which shape applies is decided by whether intakeSessionId is present, and
+// only that shape is validated, so an error names the field that failed
+// rather than "(root): Invalid input" from a union where neither matched.
+export const createRequestSchema = z.unknown().transform((body, ctx) => {
+  const shape =
+    typeof body === "object" && body !== null && "intakeSessionId" in body
+      ? fromSessionSchema
+      : fromSearchSchema;
+  const result = shape.safeParse(body);
+  if (!result.success) {
+    for (const issue of result.error.issues) {
+      ctx.issues.push({
+        code: "custom",
+        message: issue.message,
+        path: issue.path,
+        input: body,
+      });
+    }
+    return z.NEVER;
+  }
+  return result.data;
+});
 export type CreateRequestBody = z.infer<typeof createRequestSchema>;
 
 // Strict: an unsupported or misspelled filter must fail loudly rather than
