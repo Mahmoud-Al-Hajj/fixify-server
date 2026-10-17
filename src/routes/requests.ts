@@ -17,6 +17,7 @@ import {
   listRequestsHandler,
   getRequestHandler,
   getIssueCardHandler,
+  getRequestTimelineHandler,
   rejectRequestHandler,
   cancelRequestHandler,
   startRequestHandler,
@@ -57,6 +58,11 @@ requestsRouter.get(
   "/:id/issue-card",
   validate("params", requestIdParamsSchema),
   getIssueCardHandler
+);
+requestsRouter.get(
+  "/:id/timeline",
+  validate("params", requestIdParamsSchema),
+  getRequestTimelineHandler
 );
 requestsRouter.post(
   "/:id/reject",

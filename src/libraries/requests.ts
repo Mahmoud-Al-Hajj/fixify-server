@@ -24,7 +24,11 @@ import {
   cancelOpenVisitsForRequest,
   type Visit,
 } from "../models-db/visits";
-import { insertJobEvent, findAiStatusAtBooking } from "../models-db/job-events";
+import {
+  insertJobEvent,
+  findAiStatusAtBooking,
+  listEventsForRequest,
+} from "../models-db/job-events";
 import { beirutNow } from "../models-db/format-datetime";
 import { findReviewForRequest } from "../models-db/reviews";
 import {
@@ -73,6 +77,7 @@ import {
   type DiagnosisView,
 } from "./intake";
 import { buildDescription, deriveBookingFields } from "./booking-from-session";
+import { toEventEntry, type EventEntry } from "./event-entries";
 
 // A request this service just wrote; missing only if deleted concurrently,
 // which no endpoint does.
@@ -274,6 +279,17 @@ export async function getRequestForActor(
   const visits = await findVisitsForRequest(request.id);
   const review = await findReviewForRequest(request.id);
   return { request, visits, hasReview: review !== null };
+}
+
+// The job's history for either party, oldest first, in its public shape: no
+// raw payloads, no user ids (event-entries.ts).
+export async function getRequestTimeline(
+  requestId: string,
+  actorUserId: string
+): Promise<EventEntry[]> {
+  const { request } = await loadRequestForActor(requestId, actorUserId);
+  const events = await listEventsForRequest(request.id);
+  return events.map((event) => toEventEntry(event, request));
 }
 
 export interface IssueCard {

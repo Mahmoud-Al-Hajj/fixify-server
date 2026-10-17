@@ -331,3 +331,15 @@ export async function addFollowUpVisitHandler(
   );
   res.status(201).json(toRequestDetailsView(details));
 }
+
+export async function getRequestTimelineHandler(
+  req: Request,
+  res: Response<unknown, ParamsLocals<RequestIdParams>>
+): Promise<void> {
+  const user = requireUser(req);
+  const timeline = await requestsService.getRequestTimeline(
+    res.locals.params.id,
+    user.id
+  );
+  res.status(200).json({ timeline });
+}
