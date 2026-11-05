@@ -16,6 +16,10 @@ import { notificationsRouter } from "./routes/notifications";
 
 export const app = express();
 
+// Caddy on the same host proxies to 127.0.0.1:3000; trust only that hop so
+// req.ip is the client's address from X-Forwarded-For, not 127.0.0.1.
+app.set("trust proxy", "loopback");
+
 app.use(helmet());
 
 // CORS — explicit allowlist, never a wildcard
