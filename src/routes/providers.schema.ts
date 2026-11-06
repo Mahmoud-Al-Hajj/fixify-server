@@ -78,7 +78,7 @@ export type ReplaceOwnCategoriesBody = z.infer<
   typeof replaceOwnCategoriesSchema
 >;
 
-const HOUR_MINUTE = /^([01]\d|2[0-3]):[0-5]\d$/;
+export const HOUR_MINUTE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 export const replaceOwnAvailabilitySchema = z.object({
   availability: z

@@ -5,7 +5,10 @@ import { components, errors, whoCanCall } from "./components";
 import { jsonResponse } from "./convert";
 import { DEMO_ACCOUNTS, DEMO_PASSWORD, SHOW_DEMO_DATA } from "./demo";
 import { districtsPaths } from "./districts";
+import { intakePaths } from "./intake";
 import { notificationsPaths } from "./notifications";
+import { providersPaths } from "./providers";
+import { requestsPaths } from "./requests";
 import { usersPaths } from "./users";
 
 const HOW_TO_USE = [
@@ -24,6 +27,17 @@ const RULES = [
   "- Every time is Beirut wall-clock with no offset, e.g. `2026-09-29T08:00:00.000` (WallClock). Send a time back exactly as it came.",
   '- Prices are decimal strings such as `"45.00"`, never numbers.',
   '- Every error is `{ "error": { "code", "message" } }`. The client acts on `code`; each error response lists its codes and what they mean.',
+].join("\n");
+
+const BOOKING_FLOW = [
+  "## Booking flow",
+  "Log in as the customer for the customer steps and as the provider for theirs.",
+  "1. Customer: GET /categories, then GET /providers?categoryId=... to find a provider. Or describe the problem first: POST /intake-sessions, then POST /intake-sessions/{id}/analysis, and poll GET /intake-sessions/{id} for the diagnosis.",
+  "2. Customer: GET /providers/{id}/slots, then POST /requests with one of the starts. Note the request id.",
+  "3. Provider: GET /requests/{id}/issue-card, then POST /requests/{id}/quote.",
+  "4. Customer: POST /requests/{id}/quote/accept. The job is scheduled and its first visit booked.",
+  "5. Provider: POST /requests/{id}/start, then POST /requests/{id}/complete, then POST /requests/{id}/mark-paid.",
+  "6. Customer: POST /requests/{id}/review.",
 ].join("\n");
 
 const DEMO = [
@@ -45,8 +59,8 @@ export const openApiDocument = {
     title: "Fixify API",
     version: "1.0.0",
     description: (SHOW_DEMO_DATA
-      ? [HOW_TO_USE, RULES, DEMO]
-      : [READ_ONLY, RULES]
+      ? [HOW_TO_USE, BOOKING_FLOW, RULES, DEMO]
+      : [READ_ONLY, BOOKING_FLOW, RULES]
     ).join("\n\n"),
   },
   servers: [{ url: "/" }],
@@ -59,6 +73,21 @@ export const openApiDocument = {
     { name: "users", description: "The signed-in user's own account." },
     { name: "categories", description: "The trades a provider can offer." },
     { name: "districts", description: "The fixed list of areas." },
+    {
+      name: "providers",
+      description:
+        "Search providers, their profiles and free slots; a provider's own profile, trades and hours.",
+    },
+    {
+      name: "intake-sessions",
+      description:
+        "The customer describes the problem to the AI before booking.",
+    },
+    {
+      name: "requests",
+      description:
+        "The job: booking, quotes, visits, completion and the review.",
+    },
     {
       name: "notifications",
       description: "What the other party did on the user's requests.",
@@ -85,6 +114,9 @@ export const openApiDocument = {
     ...districtsPaths,
     ...authPaths,
     ...usersPaths,
+    ...providersPaths,
+    ...intakePaths,
+    ...requestsPaths,
     ...notificationsPaths,
   },
   components: components(),

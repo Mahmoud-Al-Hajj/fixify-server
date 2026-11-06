@@ -7,7 +7,7 @@ import { docsRegistry, jsonResponse, sameShape, type Paths } from "./convert";
 // models-db/categories.ts Category. The model types name as a string; the
 // server refuses to start unless the table's names are CATEGORY_NAMES
 // (assertCategoriesMatchConstants), so the schema lists them.
-const category = z
+export const category = z
   .object({ id: z.number().int(), name: z.enum(CATEGORY_NAMES) })
   .register(docsRegistry, { id: "Category" });
 sameShape<

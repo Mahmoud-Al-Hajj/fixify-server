@@ -54,7 +54,8 @@ function collect(stack: Layer[], prefix: string, into: Endpoint[]): void {
     const path = `${prefix}${layer.route.path}`
       .replace(/(.)\/$/, "$1")
       .replace(/:(\w+)/g, "{$1}");
-    for (const { method } of layer.route.stack) {
+    // One stack entry per handler in the chain, each with the method.
+    for (const method of new Set(layer.route.stack.map((l) => l.method))) {
       into.push({ method, path, authenticated });
     }
   }
@@ -111,6 +112,19 @@ test("every documented operation is a registered route, with the same auth", () 
       `${name}: documented security does not match authenticate`
     );
   }
+});
+
+test("every registered route is documented", () => {
+  const operations = documentedOperations();
+  const missing = registeredRoutes()
+    .filter(
+      (route) =>
+        !operations.some(
+          (op) => op.method === route.method && op.path === route.path
+        )
+    )
+    .map((route) => `${route.method.toUpperCase()} ${route.path}`);
+  assert.deepEqual(missing, [], `not documented: ${missing.join(", ")}`);
 });
 
 test("every request example passes its route's schema", () => {

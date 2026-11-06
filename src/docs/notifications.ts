@@ -1,14 +1,13 @@
 import { z } from "zod";
 import { CATEGORY_NAMES, type CategoryName } from "../constants/categories";
-import { JOB_EVENT_TYPE, type JobEventType } from "../constants/job-event-type";
-import { REQUEST_ACTOR_ROLE } from "../constants/request-status";
+import type { JobEventType } from "../constants/job-event-type";
 import type {
   getFeed,
   markRead,
   Notification,
 } from "../libraries/notifications";
 import { markNotificationsReadSchema } from "../routes/notifications.schema";
-import { BEARER_AUTH, errors, wallClock, whoCanCall } from "./components";
+import { BEARER_AUTH, errors, eventEntry, whoCanCall } from "./components";
 import {
   docsRegistry,
   documented,
@@ -20,30 +19,11 @@ import {
 
 const TAGS = ["notifications"];
 
-// libraries/notifications.ts Notification: the public event view
-// (libraries/event-entries.ts EventEntry) plus the request's names. The
-// service types `type` and `categoryName` as strings; every event is written
-// with a JOB_EVENT_TYPE and every category name is one of CATEGORY_NAMES.
-const notification = z
-  .object({
-    id: z.uuid(),
-    type: documented(z.enum(JOB_EVENT_TYPE), {
-      description: "What happened.",
-    }),
-    at: wallClock,
-    actor: documented(z.enum(REQUEST_ACTOR_ROLE).nullable(), {
-      description:
-        "Who did it, as their role on the request; null when that account is gone.",
-    }),
-    details: documented(
-      z
-        .record(z.string(), z.union([z.string(), z.number(), z.boolean()]))
-        .nullable(),
-      {
-        description:
-          "A few public values of the event (e.g. a price or a new time), or null.",
-      }
-    ),
+// libraries/notifications.ts Notification: the public event view plus the
+// request's names. The service types categoryName as a string; every
+// category name is one of CATEGORY_NAMES.
+const notification = eventEntry
+  .extend({
     requestId: z.uuid(),
     categoryName: z.enum(CATEGORY_NAMES),
     otherPartyName: documented(z.string(), {

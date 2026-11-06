@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { JSONSchema } from "zod/v4/core";
 import { phoneRegex } from "../routes/auth.schema";
+import { HOUR_MINUTE } from "../routes/providers.schema";
 import {
   LOCAL_DATETIME,
   PRICE,
@@ -20,12 +21,14 @@ export interface Example {
   value: unknown;
 }
 
+// schema is left out only for a binary body (a photo).
 interface MediaType {
-  schema: SchemaObject;
+  schema?: SchemaObject;
   examples?: Record<string, Example>;
+  encoding?: Record<string, { contentType: string }>;
 }
 
-interface RequestBody {
+export interface RequestBody {
   required: boolean;
   content: Record<string, MediaType>;
 }
@@ -35,12 +38,22 @@ export interface Response {
   content?: Record<string, MediaType>;
 }
 
+interface Parameter {
+  name: string;
+  in: "path" | "query";
+  required: boolean;
+  description: string;
+  example: string;
+  schema: JSONSchema._JSONSchema;
+}
+
 export interface Operation {
   tags: string[];
   operationId: string;
   summary: string;
   description?: string;
   security?: Array<Record<string, string[]>>;
+  parameters?: Parameter[];
   requestBody?: RequestBody;
   responses: Record<string, Response | Reference>;
 }
@@ -72,6 +85,7 @@ const EXAMPLE_BY_PATTERN: Record<string, string> = {
   [phoneRegex.source]: "+961 3 123 456",
   [PRICE.source]: "45.00",
   [LOCAL_DATETIME.source]: "2026-09-29T08:00:00.000",
+  [HOUR_MINUTE.source]: "08:00",
 };
 
 // localDateTime is a transform, which has no JSON Schema form; what it
@@ -180,17 +194,21 @@ export const REQUEST_EXAMPLES: Array<{
 // A JSON request body converted from its route schema. Swagger UI fills the
 // editor with the first example and offers the others in a list. The
 // production docs are public, so where examples hold demo credentials,
-// productionExamples replaces them there.
+// productionExamples replaces them there. shownAs replaces the converted
+// schema when the route schema has no JSON Schema form of its own (the
+// examples are still parsed with the route schema).
 export function jsonBody(
   schema: z.ZodType,
   {
     examples,
     productionExamples,
     fields = {},
+    shownAs,
   }: {
     examples: Record<string, Example>;
     productionExamples?: Record<string, Example>;
     fields?: Record<string, string>;
+    shownAs?: SchemaObject;
   }
 ): RequestBody {
   for (const set of [examples, productionExamples ?? {}]) {
@@ -198,7 +216,7 @@ export function jsonBody(
       REQUEST_EXAMPLES.push({ name, schema, value });
     }
   }
-  const converted = toSchema(schema, "input");
+  const converted = shownAs ?? toSchema(schema, "input");
   describeFields(converted, fields);
   return {
     required: true,
@@ -209,6 +227,37 @@ export function jsonBody(
       },
     },
   };
+}
+
+// One parameter per property of a route's params or query schema, each with
+// the description and example given here. Every property needs one, and
+// every entry must be a property, so the two cannot drift apart.
+export function parameters(
+  location: "path" | "query",
+  schema: z.ZodType,
+  docs: Record<string, { description: string; example: string }>
+): Parameter[] {
+  const { properties = {}, required = [] } = toSchema(schema, "input");
+  const names = Object.keys(properties);
+  const extra = Object.keys(docs).filter((name) => !names.includes(name));
+  if (extra.length > 0) {
+    throw new Error(`parameters: ${extra.join(", ")} not in the schema`);
+  }
+  return names.map((name) => {
+    const doc = docs[name];
+    const property = properties[name];
+    if (doc === undefined || typeof property !== "object") {
+      throw new Error(`parameters: ${name} needs a description and example`);
+    }
+    return {
+      name,
+      in: location,
+      required: location === "path" || required.includes(name),
+      description: doc.description,
+      example: doc.example,
+      schema: { ...property, examples: [doc.example] },
+    };
+  });
 }
 
 export function jsonResponse(description: string, schema: z.ZodType): Response {

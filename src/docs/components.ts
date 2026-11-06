@@ -12,6 +12,9 @@ import {
   UnauthorizedError,
   ValidationError,
 } from "../constants/errors";
+import { JOB_EVENT_TYPE, type JobEventType } from "../constants/job-event-type";
+import { REQUEST_ACTOR_ROLE } from "../constants/request-status";
+import type { EventEntry } from "../libraries/event-entries";
 import { STATUS_BY_ERROR } from "../middlewares/error-handler";
 import type { PublicUser } from "../models-db/users";
 import {
@@ -204,6 +207,48 @@ export const wallClock = z
       "Beirut wall-clock time with no offset. Treat it as Asia/Beirut explicitly; never parse it with new Date(string).",
     examples: ["2026-09-29T08:00:00.000"],
   });
+
+// DECIMAL(10,2) columns come back from mysql2 as strings with two decimals
+// and stay strings (models-db/requests.ts).
+export const decimal = z
+  .string()
+  .regex(/^\d{1,8}\.\d{2}$/)
+  .register(docsRegistry, {
+    id: "Decimal",
+    description:
+      "A price as a decimal string with two decimals; never parse it into a float.",
+    examples: ["45.00"],
+  });
+
+// libraries/event-entries.ts EventEntry, the public view of a job event. The
+// service types `type` as a string; every event is written with a
+// JOB_EVENT_TYPE. Shared by the timeline and the notification feed.
+export const eventEntry = z
+  .object({
+    id: z.uuid(),
+    type: documented(z.enum(JOB_EVENT_TYPE), {
+      description: "What happened.",
+    }),
+    at: wallClock,
+    actor: documented(z.enum(REQUEST_ACTOR_ROLE).nullable(), {
+      description:
+        "Who did it, as their role on the request; null when that account is gone.",
+    }),
+    details: documented(
+      z
+        .record(z.string(), z.union([z.string(), z.number(), z.boolean()]))
+        .nullable(),
+      {
+        description:
+          "A few public values of the event (e.g. a price or a new time), or null.",
+      }
+    ),
+  })
+  .register(docsRegistry, { id: "EventEntry" });
+sameShape<
+  z.output<typeof eventEntry>,
+  Omit<EventEntry, "type"> & { type: JobEventType }
+>(true);
 
 // models-db/users.ts PublicUser; controllers/auth.ts and controllers/users.ts.
 export const publicUser = z
