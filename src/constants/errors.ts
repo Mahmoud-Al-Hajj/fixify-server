@@ -51,7 +51,8 @@ export class ServiceUnavailableError extends DomainError {
   }
 }
 
-// Specific codes for refusals the client acts on.
+// Specific codes for refusals the client acts on, and the two the error
+// handler sets itself (error-handler.ts).
 export const ERROR_CODE = {
   SESSION_ALREADY_BOOKED: "SESSION_ALREADY_BOOKED",
   ANALYSIS_PENDING: "ANALYSIS_PENDING",
@@ -61,4 +62,6 @@ export const ERROR_CODE = {
   ANALYSIS_RATE_LIMITED: "ANALYSIS_RATE_LIMITED",
   AI_NOT_CONFIGURED: "AI_NOT_CONFIGURED",
   RATE_LIMITED: "RATE_LIMITED",
+  PAYLOAD_TOO_LARGE: "PAYLOAD_TOO_LARGE",
+  INTERNAL_ERROR: "INTERNAL_ERROR",
 } as const;

@@ -2,7 +2,8 @@ import { z } from "zod";
 import { SERVICE_TYPE } from "../constants/service-type";
 import { REQUEST_ACTOR_ROLE } from "../constants/request-status";
 
-const LOCAL_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{3})?)?$/;
+export const LOCAL_DATETIME =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{3})?)?$/;
 const LOCAL_DATETIME_MESSAGE =
   "Expected a local date-time YYYY-MM-DDTHH:mm[:ss[.SSS]] with no timezone offset";
 
@@ -57,7 +58,7 @@ const bookingBase = {
 
 // Plain category search: the client describes the job itself. Not strict, as
 // before. It never sees an intakeSessionId: that key selects the other shape.
-const fromSearchSchema = z.object({
+export const fromSearchSchema = z.object({
   ...bookingBase,
   serviceType: z.enum(SERVICE_TYPE).nullable().default(null),
   description: z.string().trim().min(1).max(2000),
@@ -66,7 +67,7 @@ const fromSearchSchema = z.object({
 
 // Booked from an intake session: the server derives service type, duration
 // and description (docs/ai-plan.md §13), so sending any of them is a 400.
-const fromSessionSchema = z.strictObject({
+export const fromSessionSchema = z.strictObject({
   ...bookingBase,
   intakeSessionId: z.uuid(),
 });

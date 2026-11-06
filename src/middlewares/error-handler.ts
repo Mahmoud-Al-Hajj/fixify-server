@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from "express";
 import { logger } from "../config/logger";
 import {
   DomainError,
+  ERROR_CODE,
   UnauthorizedError,
   NotFoundError,
   ForbiddenError,
@@ -12,7 +13,7 @@ import {
   ServiceUnavailableError,
 } from "../constants/errors";
 
-const STATUS_BY_ERROR = new Map<Function, number>([
+export const STATUS_BY_ERROR = new Map<Function, number>([
   [ValidationError, 400],
   [UnauthorizedError, 401],
   [ForbiddenError, 403],
@@ -52,7 +53,7 @@ export function errorHandler(
     const tooLarge = err.status === 413;
     res.status(err.status).json({
       error: {
-        code: tooLarge ? "PAYLOAD_TOO_LARGE" : "VALIDATION_FAILED",
+        code: tooLarge ? ERROR_CODE.PAYLOAD_TOO_LARGE : "VALIDATION_FAILED",
         message: tooLarge ? "Request body too large" : "Malformed request body",
       },
     });
@@ -68,6 +69,6 @@ export function errorHandler(
     error: err instanceof Error ? err.message : String(err),
   });
   res.status(500).json({
-    error: { code: "INTERNAL_ERROR", message: "Something went wrong" },
+    error: { code: ERROR_CODE.INTERNAL_ERROR, message: "Something went wrong" },
   });
 }
