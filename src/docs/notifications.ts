@@ -8,9 +8,10 @@ import type {
   Notification,
 } from "../libraries/notifications";
 import { markNotificationsReadSchema } from "../routes/notifications.schema";
-import { BEARER_AUTH, errors, wallClock } from "./components";
+import { BEARER_AUTH, errors, wallClock, whoCanCall } from "./components";
 import {
   docsRegistry,
+  documented,
   jsonBody,
   jsonResponse,
   sameShape,
@@ -26,16 +27,32 @@ const TAGS = ["notifications"];
 const notification = z
   .object({
     id: z.uuid(),
-    type: z.enum(JOB_EVENT_TYPE),
+    type: documented(z.enum(JOB_EVENT_TYPE), {
+      description: "What happened.",
+    }),
     at: wallClock,
-    actor: z.enum(REQUEST_ACTOR_ROLE).nullable(),
-    details: z
-      .record(z.string(), z.union([z.string(), z.number(), z.boolean()]))
-      .nullable(),
+    actor: documented(z.enum(REQUEST_ACTOR_ROLE).nullable(), {
+      description:
+        "Who did it, as their role on the request; null when that account is gone.",
+    }),
+    details: documented(
+      z
+        .record(z.string(), z.union([z.string(), z.number(), z.boolean()]))
+        .nullable(),
+      {
+        description:
+          "A few public values of the event (e.g. a price or a new time), or null.",
+      }
+    ),
     requestId: z.uuid(),
     categoryName: z.enum(CATEGORY_NAMES),
-    otherPartyName: z.string(),
-    unread: z.boolean(),
+    otherPartyName: documented(z.string(), {
+      description: "The other party's full name.",
+      examples: ["Tony Aoun"],
+    }),
+    unread: documented(z.boolean(), {
+      description: "Newer than the user's last readUpTo.",
+    }),
   })
   .register(docsRegistry, { id: "Notification" });
 
@@ -71,8 +88,10 @@ export const notificationsPaths: Paths = {
       tags: TAGS,
       operationId: "getNotifications",
       summary: "The signed-in user's notification feed",
-      description:
-        "The newest events on the user's requests made by the other party, newest first. unread: newer than the last readUpTo.",
+      description: whoCanCall(
+        "any signed-in user",
+        "The newest events on the user's requests that the other party made, newest first."
+      ),
       security: BEARER_AUTH,
       responses: {
         200: jsonResponse("The feed", feed),
@@ -85,10 +104,25 @@ export const notificationsPaths: Paths = {
       tags: TAGS,
       operationId: "markNotificationsRead",
       summary: "Mark notifications read up to a time",
-      description:
-        "readUpTo: the `at` of the newest notification the app showed, sent back unchanged. The read mark only moves forward. Unknown fields are a 400.",
+      description: whoCanCall(
+        "any signed-in user",
+        "The read mark only moves forward. Unknown fields are a 400."
+      ),
       security: BEARER_AUTH,
-      requestBody: jsonBody(markNotificationsReadSchema),
+      requestBody: jsonBody(markNotificationsReadSchema, {
+        examples: {
+          readUpTo: {
+            summary: "Read up to a time",
+            description:
+              "Replace the time with the `at` of the newest notification from GET /notifications.",
+            value: { readUpTo: "2026-11-06T18:00:00.000" },
+          },
+        },
+        fields: {
+          readUpTo:
+            "The `at` of the newest notification the app showed, sent back unchanged.",
+        },
+      }),
       responses: {
         200: jsonResponse("The unread count after marking", unread),
         ...errors(400, 401, 413),

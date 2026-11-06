@@ -5,13 +5,20 @@ import { openApiDocument } from "../docs/openapi";
 
 export const docsRouter = Router();
 
-// Served in every environment; "Try it out" sends requests only outside
-// production. validatorUrl: null keeps Swagger UI from sending the spec's URL
-// to validator.swagger.io.
+// Served in every environment; requests are sent only outside production,
+// where every body is editable from the start. validatorUrl: null keeps
+// Swagger UI from sending the spec's URL to validator.swagger.io;
+// persistAuthorization keeps the pasted token in the browser across reloads.
+const COMMON_OPTIONS = {
+  validatorUrl: null,
+  persistAuthorization: true,
+  displayRequestDuration: true,
+  filter: true,
+};
 const swaggerOptions =
   env.nodeEnv === "production"
-    ? { validatorUrl: null, supportedSubmitMethods: [] }
-    : { validatorUrl: null };
+    ? { ...COMMON_OPTIONS, supportedSubmitMethods: [] }
+    : { ...COMMON_OPTIONS, tryItOutEnabled: true };
 
 docsRouter.get("/openapi.json", (_req, res) => {
   res.status(200).json(openApiDocument);

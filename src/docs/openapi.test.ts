@@ -13,6 +13,7 @@ import { notificationsRouter } from "../routes/notifications";
 import { providersRouter } from "../routes/providers";
 import { requestsRouter } from "../routes/requests";
 import { usersRouter } from "../routes/users";
+import { REQUEST_EXAMPLES } from "./convert";
 import { openApiDocument } from "./openapi";
 
 type Layer = Router["stack"][number];
@@ -109,5 +110,45 @@ test("every documented operation is a registered route, with the same auth", () 
       route.authenticated,
       `${name}: documented security does not match authenticate`
     );
+  }
+});
+
+test("every request example passes its route's schema", () => {
+  assert.ok(REQUEST_EXAMPLES.length > 0);
+  for (const { name, schema, value } of REQUEST_EXAMPLES) {
+    const result = schema.safeParse(value);
+    assert.ok(result.success, `example "${name}": ${result.error?.message}`);
+  }
+});
+
+// Every schema node with a pattern, or an email or uuid format.
+function patternedSchemas(node: unknown, found: object[] = []): object[] {
+  if (typeof node !== "object" || node === null) return found;
+  const pattern: unknown = Reflect.get(node, "pattern");
+  const format: unknown = Reflect.get(node, "format");
+  if (typeof pattern === "string" || format === "email" || format === "uuid") {
+    found.push(node);
+  }
+  for (const value of Object.values(node)) patternedSchemas(value, found);
+  return found;
+}
+
+// Swagger UI fills a pattern or format that has no example with a random
+// value, which the server then rejects.
+test("every pattern and format in the spec has an example that matches it", () => {
+  const schemas = patternedSchemas(openApiDocument);
+  assert.ok(schemas.length > 0);
+  for (const schema of schemas) {
+    const where = JSON.stringify(schema).slice(0, 160);
+    const examples: unknown = Reflect.get(schema, "examples");
+    assert.ok(
+      Array.isArray(examples) && examples.length > 0,
+      `no example: ${where}`
+    );
+    const pattern: unknown = Reflect.get(schema, "pattern");
+    if (typeof pattern !== "string") continue;
+    for (const example of examples) {
+      assert.match(String(example), new RegExp(pattern), where);
+    }
   }
 });

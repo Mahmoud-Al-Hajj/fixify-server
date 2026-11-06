@@ -1,6 +1,12 @@
 import { z } from "zod";
 import type { JSONSchema } from "zod/v4/core";
-import { LOCAL_DATETIME, localDateTime } from "../routes/requests.schema";
+import { phoneRegex } from "../routes/auth.schema";
+import {
+  LOCAL_DATETIME,
+  PRICE,
+  localDateTime,
+} from "../routes/requests.schema";
+import { SHOW_DEMO_DATA } from "./demo";
 
 export type SchemaObject = JSONSchema.BaseSchema;
 
@@ -8,8 +14,15 @@ interface Reference {
   $ref: string;
 }
 
+export interface Example {
+  summary: string;
+  description?: string;
+  value: unknown;
+}
+
 interface MediaType {
   schema: SchemaObject;
+  examples?: Record<string, Example>;
 }
 
 interface RequestBody {
@@ -47,19 +60,38 @@ export const docsRegistry = z.registry<{
 
 const COMPONENT_SCHEMAS = "#/components/schemas/";
 
+// Swagger UI fills a string that has a pattern and no example with a random
+// match of the pattern (e.g. a phone of "38144)(-8908(153 )-((6"), so every
+// pattern or format in the spec gets a real example here. The test fails on
+// any that is left without one.
+const EXAMPLE_BY_FORMAT: Record<string, string> = {
+  email: "customer@example.com",
+  uuid: "00000000-0000-4000-8000-000000000001",
+};
+const EXAMPLE_BY_PATTERN: Record<string, string> = {
+  [phoneRegex.source]: "+961 3 123 456",
+  [PRICE.source]: "45.00",
+  [LOCAL_DATETIME.source]: "2026-09-29T08:00:00.000",
+};
+
 // localDateTime is a transform, which has no JSON Schema form; what it
-// accepts is LOCAL_DATETIME (routes/requests.schema.ts).
-function describeLocalDateTime({
+// accepts is LOCAL_DATETIME (routes/requests.schema.ts). zod also bounds
+// every integer by the safe-integer range, which says nothing here.
+function describeSchema({
   zodSchema,
   jsonSchema,
 }: {
   zodSchema: unknown;
   jsonSchema: SchemaObject;
 }): void {
-  if (zodSchema === localDateTime) {
-    jsonSchema.pattern = LOCAL_DATETIME.source;
-    jsonSchema.examples = ["2026-09-29T08:00:00.000"];
-  }
+  if (zodSchema === localDateTime) jsonSchema.pattern = LOCAL_DATETIME.source;
+  if (jsonSchema.minimum === Number.MIN_SAFE_INTEGER) delete jsonSchema.minimum;
+  if (jsonSchema.maximum === Number.MAX_SAFE_INTEGER) delete jsonSchema.maximum;
+  if (jsonSchema.examples !== undefined) return;
+  const example =
+    (jsonSchema.format && EXAMPLE_BY_FORMAT[jsonSchema.format]) ??
+    (jsonSchema.pattern && EXAMPLE_BY_PATTERN[jsonSchema.pattern]);
+  if (example) jsonSchema.examples = [example];
 }
 
 // zod points a registered schema at the converted schema's own $defs; the
@@ -85,7 +117,7 @@ export function toSchema(
   const converted = z.toJSONSchema(schema, {
     io,
     metadata: docsRegistry,
-    override: describeLocalDateTime,
+    override: describeSchema,
   });
   delete converted.$schema;
   delete converted.$defs;
@@ -98,6 +130,7 @@ export function registeredSchemas(): Record<string, SchemaObject> {
   const { schemas } = z.toJSONSchema(docsRegistry, {
     io: "output",
     metadata: docsRegistry,
+    override: describeSchema,
     uri: (id) => `${COMPONENT_SCHEMAS}${id}`,
   });
   for (const schema of Object.values(schemas)) {
@@ -107,10 +140,74 @@ export function registeredSchemas(): Record<string, SchemaObject> {
   return schemas;
 }
 
-export function jsonBody(schema: z.ZodType): RequestBody {
+// A response field's description or example, published with the schema.
+export function documented<T extends z.ZodType>(
+  schema: T,
+  meta: { description?: string; examples?: string[] }
+): T {
+  const registered: z.ZodType = schema;
+  docsRegistry.add(registered, meta);
+  return schema;
+}
+
+// Sets the description of each field, by dotted path through nested
+// objects. A path that is not in the schema throws, so a renamed field fails
+// the spec (and the test) instead of losing its description.
+function describeFields(
+  schema: SchemaObject,
+  fields: Record<string, string>
+): void {
+  for (const [path, description] of Object.entries(fields)) {
+    let node: JSONSchema._JSONSchema | undefined = schema;
+    for (const key of path.split(".")) {
+      node = typeof node === "object" ? node.properties?.[key] : undefined;
+    }
+    if (typeof node !== "object") {
+      throw new Error(`describeFields: no field ${path} in the schema`);
+    }
+    node.description = description;
+  }
+}
+
+// Every request example in the spec, with the route schema it is for, so
+// the test can parse each one; production examples included.
+export const REQUEST_EXAMPLES: Array<{
+  name: string;
+  schema: z.ZodType;
+  value: unknown;
+}> = [];
+
+// A JSON request body converted from its route schema. Swagger UI fills the
+// editor with the first example and offers the others in a list. The
+// production docs are public, so where examples hold demo credentials,
+// productionExamples replaces them there.
+export function jsonBody(
+  schema: z.ZodType,
+  {
+    examples,
+    productionExamples,
+    fields = {},
+  }: {
+    examples: Record<string, Example>;
+    productionExamples?: Record<string, Example>;
+    fields?: Record<string, string>;
+  }
+): RequestBody {
+  for (const set of [examples, productionExamples ?? {}]) {
+    for (const [name, { value }] of Object.entries(set)) {
+      REQUEST_EXAMPLES.push({ name, schema, value });
+    }
+  }
+  const converted = toSchema(schema, "input");
+  describeFields(converted, fields);
   return {
     required: true,
-    content: { "application/json": { schema: toSchema(schema, "input") } },
+    content: {
+      "application/json": {
+        schema: converted,
+        examples: SHOW_DEMO_DATA ? examples : (productionExamples ?? examples),
+      },
+    },
   };
 }
 

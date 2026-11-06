@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { CATEGORY_NAMES, type CategoryName } from "../constants/categories";
 import type { Category } from "../models-db/categories";
-import { errors } from "./components";
+import { errors, whoCanCall } from "./components";
 import { docsRegistry, jsonResponse, sameShape, type Paths } from "./convert";
 
 // models-db/categories.ts Category. The model types name as a string; the
@@ -21,6 +21,10 @@ export const categoriesPaths: Paths = {
       tags: ["categories"],
       operationId: "listCategories",
       summary: "Every trade, by name",
+      description: whoCanCall(
+        "anyone",
+        "Use an id here wherever a categoryId is asked for."
+      ),
       responses: {
         // controllers/categories.ts listCategories.
         200: jsonResponse(

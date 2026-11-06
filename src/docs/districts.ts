@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { DISTRICT_NAMES } from "../constants/districts";
-import { errors } from "./components";
+import { errors, whoCanCall } from "./components";
 import { jsonResponse, type Paths } from "./convert";
 
 export const districtsPaths: Paths = {
@@ -9,8 +9,10 @@ export const districtsPaths: Paths = {
       tags: ["districts"],
       operationId: "listDistricts",
       summary: "The fixed list of districts",
-      description:
-        "The only values a provider's area and the provider search area filter accept.",
+      description: whoCanCall(
+        "anyone",
+        "The only values a provider's area and the provider search area filter accept."
+      ),
       responses: {
         // controllers/districts.ts listDistrictsHandler.
         200: jsonResponse(
