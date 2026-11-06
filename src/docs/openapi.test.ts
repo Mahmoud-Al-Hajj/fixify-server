@@ -14,6 +14,7 @@ import { providersRouter } from "../routes/providers";
 import { requestsRouter } from "../routes/requests";
 import { usersRouter } from "../routes/users";
 import { REQUEST_EXAMPLES } from "./convert";
+import { DIAGNOSIS_EXAMPLE, diagnosisView } from "./intake";
 import { openApiDocument } from "./openapi";
 
 type Layer = Router["stack"][number];
@@ -165,4 +166,9 @@ test("every pattern and format in the spec has an example that matches it", () =
       assert.match(String(example), new RegExp(pattern), where);
     }
   }
+});
+
+test("the diagnosis example is a valid diagnosis", () => {
+  const result = diagnosisView.safeParse(DIAGNOSIS_EXAMPLE);
+  assert.ok(result.success, `diagnosis example: ${result.error?.message}`);
 });

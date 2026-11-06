@@ -58,6 +58,22 @@ export const messageView = z
   .register(docsRegistry, { id: "IntakeMessage" });
 sameShape<z.output<typeof messageView>, ReturnType<typeof toMessageView>>(true);
 
+// What a finished diagnosis looks like; the test parses it with
+// diagnosisView.
+export const DIAGNOSIS_EXAMPLE = {
+  title: "Leaking sink trap",
+  confidence: "high",
+  category: "Plumber",
+  serviceType: "repair",
+  durationMinutes: 60,
+  explanation:
+    "Water is dripping from the trap under the sink; the seal or the trap itself has failed and needs replacing.",
+  isUrgent: false,
+  safetyNote: null,
+  suggestedParts: [{ name: "Sink trap", quantity: 1, unit: "piece" }],
+  categoryId: 2,
+};
+
 // libraries/intake.ts DiagnosisView: the AI's validated output, never
 // edited, plus the category id the server resolved from its name.
 export const diagnosisView = diagnosisSchema
@@ -71,6 +87,7 @@ export const diagnosisView = diagnosisSchema
     id: "Diagnosis",
     description:
       "The AI's suggestion. The customer confirms or changes the trade before booking.",
+    examples: [DIAGNOSIS_EXAMPLE],
   });
 sameShape<z.output<typeof diagnosisView>, DiagnosisView>(true);
 
@@ -228,7 +245,7 @@ export const intakePaths: Paths = {
       summary: "A session with its conversation and diagnosis",
       description: whoCanCall(
         "the session's customer",
-        "diagnosis is set only while aiStatus is done."
+        "Poll this after starting an analysis. diagnosis is set only while aiStatus is done; on failed, choose a trade from GET /categories instead. Booking from the session with the diagnosed trade (categoryId) takes its service type and duration and seeds the parts list from suggestedParts; booking with another trade, or before the diagnosis is done, takes none of them."
       ),
       security: BEARER_AUTH,
       parameters: parameters("path", sessionIdParamsSchema, {

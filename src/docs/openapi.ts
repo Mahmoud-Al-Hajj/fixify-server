@@ -40,6 +40,17 @@ const BOOKING_FLOW = [
   "6. Customer: POST /requests/{id}/review.",
 ].join("\n");
 
+const AI_WALKTHROUGH = [
+  "## Try the AI diagnosis",
+  "Log in as a customer (e.g. Rana) and Authorize first. Use test photos only: the free Gemini tier may keep what it is sent.",
+  "1. **POST /intake-sessions**: type the problem in body and attach photos with the file picker. Copy the session id.",
+  "2. **POST /intake-sessions/{id}/analysis**: answers 202 at once; the diagnosis runs in the background.",
+  "3. **GET /intake-sessions/{id}**: run it every few seconds until aiStatus is done (or failed). The diagnosis shows the likely fault, the trade with its categoryId, the duration and the suggested parts.",
+  '4. Find a provider with **GET /providers** using that categoryId, then book with **POST /requests**, example "From an intake session", with your session id.',
+  "",
+  "To add detail, POST /intake-sessions/{id}/messages and analyse again. A session gets a limited number of analyses, and a server without the AI configured answers 503.",
+].join("\n");
+
 const DEMO = [
   "## Demo accounts",
   `From scripts/seed-demo.sql. Every password is \`${DEMO_PASSWORD}\`.`,
@@ -59,7 +70,7 @@ export const openApiDocument = {
     title: "Fixify API",
     version: "1.0.0",
     description: (SHOW_DEMO_DATA
-      ? [HOW_TO_USE, BOOKING_FLOW, RULES, DEMO]
+      ? [HOW_TO_USE, BOOKING_FLOW, AI_WALKTHROUGH, RULES, DEMO]
       : [READ_ONLY, BOOKING_FLOW, RULES]
     ).join("\n\n"),
   },

@@ -68,7 +68,7 @@ export type Paths = Record<
 export const docsRegistry = z.registry<{
   id?: string;
   description?: string;
-  examples?: string[];
+  examples?: unknown[];
 }>();
 
 const COMPONENT_SCHEMAS = "#/components/schemas/";
@@ -157,7 +157,7 @@ export function registeredSchemas(): Record<string, SchemaObject> {
 // A response field's description or example, published with the schema.
 export function documented<T extends z.ZodType>(
   schema: T,
-  meta: { description?: string; examples?: string[] }
+  meta: { description?: string; examples?: unknown[] }
 ): T {
   const registered: z.ZodType = schema;
   docsRegistry.add(registered, meta);
