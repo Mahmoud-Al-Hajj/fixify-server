@@ -13,6 +13,7 @@ import { providersRouter } from "./routes/providers";
 import { usersRouter } from "./routes/users";
 import { intakeRouter } from "./routes/intake";
 import { notificationsRouter } from "./routes/notifications";
+import { docsRouter } from "./routes/docs";
 
 export const app = express();
 
@@ -48,6 +49,9 @@ app.use("/providers", providersRouter);
 app.use("/users", usersRouter);
 app.use("/intake-sessions", intakeRouter);
 app.use("/notifications", notificationsRouter);
+
+// OpenAPI spec and Swagger UI
+app.use("/docs", docsRouter);
 
 // Unmatched route → 404 in the standard error shape
 app.use(notFoundHandler);
