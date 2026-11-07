@@ -14,6 +14,7 @@
 // Sequential; one line per step; stops at the first mismatch.
 
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 import { parseArgs } from "node:util";
@@ -730,6 +731,64 @@ async function journey(): Promise<void> {
       `the feed should show one requested start change: ${JSON.stringify(moves)}`
     );
   }
+
+  // One notification read on its own; the others keep their state.
+  const opened = text(items[0], "id");
+  if (at(items[0], "unread") !== true) {
+    throw new SmokeFailure(
+      `the item to open should be unread: ${JSON.stringify(items[0])}`
+    );
+  }
+  const unreadBefore = Number(at(feed, "unreadCount"));
+  await step(
+    "provider opens one notification",
+    200,
+    () => api("POST", `/notifications/${opened}/read`, provider),
+    [["unreadCount", unreadBefore - 1]]
+  );
+  const after = await step(
+    "provider's notifications after opening one",
+    200,
+    () => api("GET", "/notifications", provider)
+  );
+  const unreadById = new Map(
+    list(feed, "notifications").map((n) => [text(n, "id"), at(n, "unread")])
+  );
+  const changed = list(after, "notifications").filter(
+    (n) =>
+      at(n, "unread") !==
+      (text(n, "id") === opened ? false : unreadById.get(text(n, "id")))
+  );
+  if (changed.length > 0) {
+    throw new SmokeFailure(
+      `only the opened item should turn read: ${JSON.stringify(changed)}`
+    );
+  }
+  await step(
+    "provider opens it again (no-op)",
+    200,
+    () => api("POST", `/notifications/${opened}/read`, provider),
+    [["unreadCount", unreadBefore - 1]]
+  );
+  const own = timeline.find(
+    (e) => at(e, "actor") === REQUEST_ACTOR_ROLE.PROVIDER
+  );
+  if (own === undefined) {
+    throw new SmokeFailure("the timeline should have a provider action");
+  }
+  await step("refused: provider opens their own action", 404, () =>
+    api("POST", `/notifications/${text(own, "id")}/read`, provider)
+  );
+  await step("refused: another customer opens the notification", 404, () =>
+    api("POST", `/notifications/${opened}/read`, rana)
+  );
+  await step("refused: opening an unknown notification", 404, () =>
+    api("POST", `/notifications/${randomUUID()}/read`, provider)
+  );
+  await step("refused: opening a notification by a non-uuid id", 400, () =>
+    api("POST", "/notifications/not-a-uuid/read", provider)
+  );
+
   await step(
     "provider marks notifications read",
     200,

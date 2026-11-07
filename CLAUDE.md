@@ -94,7 +94,9 @@ in `libraries/event-entries.ts` (`PUBLIC_DETAILS`, a whitelist per event type; `
 is a role, never a user id). `GET /requests/:id/timeline` is either party's history,
 oldest first. `GET /notifications` is the newest 50 events on the user's requests made by
 someone else, with `unreadCount`; unread means `created_at > users.notifications_read_at`
-(NULL = all), one SQL expression for both. `POST /notifications/read { readUpTo }` moves
+(NULL = all) and no `notification_reads` row for that user and event, one SQL expression for
+both. `POST /notifications/:id/read` marks one event read (404 when it is not in the
+caller's feed). `POST /notifications/read { readUpTo }` moves
 `notifications_read_at` forward only, capped at MySQL's clock.
 
 **Request photo — the provider's job photos: `before`, `after`, or `extra`.** `kind`
@@ -210,8 +212,8 @@ scaffold them, and do not reintroduce them as "while we're here" improvements:
 - Admin panel, admin routes, or an admin role
 - Two-sided availability matching (the provider declares hours; the customer picks)
 - Multi-provider bidding on one request
-- A `notifications` table (the feed is derived from `job_events` and
-  `users.notifications_read_at`)
+- A `notifications` table (the feed is derived from `job_events`; unread from
+  `users.notifications_read_at` and `notification_reads`, which holds only read marks)
 - Tags or a price range from the AI, in any form (cut from the diagnosis)
 - An AI-ranked provider list (matching is a SQL query; see "AI")
 - Invoicing or receipts as persisted documents
@@ -424,6 +426,8 @@ options laid out.
   fresh database is built from `schema.sql` alone (loaded into an existing
   `fixify` database; see the README); migrations bring an existing database up
   to date.
+- Migration 009 (`notification_reads`) must be applied before deploying the code
+  that reads it, or `GET /notifications` fails.
 
 
 ### Operations that require a transaction

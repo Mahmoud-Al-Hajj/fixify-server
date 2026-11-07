@@ -9,3 +9,8 @@ export const markNotificationsReadSchema = z.strictObject({
 export type MarkNotificationsReadBody = z.infer<
   typeof markNotificationsReadSchema
 >;
+
+export const notificationIdParamsSchema = z.object({
+  id: z.uuid(),
+});
+export type NotificationIdParams = z.infer<typeof notificationIdParamsSchema>;

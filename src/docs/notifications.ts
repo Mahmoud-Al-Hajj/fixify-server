@@ -3,16 +3,21 @@ import { CATEGORY_NAMES, type CategoryName } from "../constants/categories";
 import type { JobEventType } from "../constants/job-event-type";
 import type {
   getFeed,
+  markOneRead,
   markRead,
   Notification,
 } from "../libraries/notifications";
-import { markNotificationsReadSchema } from "../routes/notifications.schema";
+import {
+  markNotificationsReadSchema,
+  notificationIdParamsSchema,
+} from "../routes/notifications.schema";
 import { BEARER_AUTH, errors, eventEntry, whoCanCall } from "./components";
 import {
   docsRegistry,
   documented,
   jsonBody,
   jsonResponse,
+  parameters,
   sameShape,
   type Paths,
 } from "./convert";
@@ -31,7 +36,8 @@ const notification = eventEntry
       examples: ["Tony Aoun"],
     }),
     unread: documented(z.boolean(), {
-      description: "Newer than the user's last readUpTo.",
+      description:
+        "Newer than the user's last readUpTo and not opened on its own.",
     }),
   })
   .register(docsRegistry, { id: "Notification" });
@@ -55,11 +61,16 @@ sameShape<
   }
 >(true);
 
-// controllers/notifications.ts markNotificationsReadHandler.
+// controllers/notifications.ts markNotificationsReadHandler and
+// markNotificationReadHandler.
 const unread = z.object({ unreadCount: z.number().int() });
 sameShape<
   z.output<typeof unread>,
   { unreadCount: Awaited<ReturnType<typeof markRead>> }
+>(true);
+sameShape<
+  z.output<typeof unread>,
+  { unreadCount: Awaited<ReturnType<typeof markOneRead>> }
 >(true);
 
 export const notificationsPaths: Paths = {
@@ -106,6 +117,28 @@ export const notificationsPaths: Paths = {
       responses: {
         200: jsonResponse("The unread count after marking", unread),
         ...errors(400, 401, 413),
+      },
+    },
+  },
+  "/notifications/{id}/read": {
+    post: {
+      tags: TAGS,
+      operationId: "markNotificationRead",
+      summary: "Mark one notification read",
+      description: whoCanCall(
+        "any signed-in user",
+        "Marks only this notification read; the others keep their state. Marking it again changes nothing. A 404 when it is not in the user's feed: another user's request, or the user's own action."
+      ),
+      security: BEARER_AUTH,
+      parameters: parameters("path", notificationIdParamsSchema, {
+        id: {
+          description: "A notification's `id`, from GET /notifications.",
+          example: "5b1f6a1e-3c2d-4e8f-9a7b-2c4d6e8f0a1b",
+        },
+      }),
+      responses: {
+        200: jsonResponse("The unread count after marking", unread),
+        ...errors(400, 401, 404),
       },
     },
   },
