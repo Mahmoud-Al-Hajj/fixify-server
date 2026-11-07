@@ -198,7 +198,7 @@ CREATE TABLE visits (
                               ON UPDATE CURRENT_TIMESTAMP(3),
 
   active_slot     DATETIME(3) GENERATED ALWAYS AS (
-                    CASE WHEN status = 'cancelled'
+                    CASE WHEN status IN ('cancelled', 'done')
                          THEN NULL ELSE scheduled_start END) STORED,
 
   PRIMARY KEY (id),

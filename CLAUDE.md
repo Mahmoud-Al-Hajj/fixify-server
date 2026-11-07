@@ -463,7 +463,8 @@ Two layers, both required:
    overlap maps to a `ConflictError`. This is the one approved exception to "no
    check-then-insert"; do not copy the pattern without the lock.
 2. **Unique key.** `visits` has a unique key on `(provider_id, active_slot)`, where
-   `active_slot` is a generated column that is `NULL` for cancelled visits. It catches
+   `active_slot` is a generated column that is `NULL` for cancelled and done visits
+   (migration 008), so only open visits hold a slot. It catches
    identical start times even if a code path skips the check. Application code catches
    `ER_DUP_ENTRY` on that key and maps it to a `ConflictError` telling the customer the
    slot was taken.
