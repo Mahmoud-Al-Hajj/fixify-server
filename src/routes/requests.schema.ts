@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { SERVICE_TYPE } from "../constants/service-type";
 import { REQUEST_ACTOR_ROLE } from "../constants/request-status";
+import { PHOTO_KIND } from "../constants/photo-kind";
 
 export const LOCAL_DATETIME =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{3})?)?$/;
@@ -195,3 +196,16 @@ export const addFollowUpVisitSchema = z.object({
   durationMinutes: z.number().int().min(15).max(1440),
 });
 export type AddFollowUpVisitBody = z.infer<typeof addFollowUpVisitSchema>;
+
+// A job photo upload's text field; the photos arrive as multipart files
+// (middlewares/upload.ts).
+export const addRequestPhotosSchema = z.object({
+  kind: z.enum(PHOTO_KIND),
+});
+export type AddRequestPhotosBody = z.infer<typeof addRequestPhotosSchema>;
+
+export const requestPhotoParamsSchema = z.object({
+  id: z.uuid(),
+  photoId: z.uuid(),
+});
+export type RequestPhotoParams = z.infer<typeof requestPhotoParamsSchema>;

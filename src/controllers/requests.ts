@@ -1,17 +1,22 @@
-import type { Request, Response } from "express";
+import type { Request, Response, NextFunction } from "express";
 import * as requestsService from "../libraries/requests";
 import * as quotesService from "../libraries/quotes";
 import * as reviewsService from "../libraries/reviews";
 import * as visitsService from "../libraries/visits";
+import * as requestPhotosService from "../libraries/request-photos";
 import { RESCHEDULE_ACTION } from "../libraries/visit-rules";
 import { REQUEST_ACTOR_ROLE } from "../constants/request-status";
+import { NotFoundError } from "../constants/errors";
 import { requireUser } from "../middlewares/authenticate";
 import type { QueryLocals, ParamsLocals } from "../middlewares/validate";
+import type { PhotoLocals } from "../middlewares/upload";
+import type { RequestPhoto } from "../models-db/request-photos";
 import type { Visit } from "../models-db/visits";
 import type { Request as RequestRecord } from "../models-db/requests";
 import { toMessageView } from "./intake";
 import type {
   AddFollowUpVisitBody,
+  AddRequestPhotosBody,
   ChangeRequestedStartBody,
   CreateRequestBody,
   CreateReviewBody,
@@ -19,6 +24,7 @@ import type {
   ProposeQuoteBody,
   ProposeRescheduleBody,
   RequestIdParams,
+  RequestPhotoParams,
   SaveRequestItemsBody,
   VisitIdParams,
 } from "../routes/requests.schema";
@@ -357,4 +363,67 @@ export async function getRequestTimelineHandler(
     user.id
   );
   res.status(200).json({ timeline });
+}
+
+// Job photos are exposed as the authenticated route that serves them, never
+// as the storage path.
+export function toRequestPhotoView(requestId: string, photo: RequestPhoto) {
+  return {
+    id: photo.id,
+    kind: photo.kind,
+    url: `/requests/${requestId}/photos/${photo.id}`,
+    createdAt: photo.createdAt,
+  };
+}
+
+export async function addRequestPhotosHandler(
+  req: Request,
+  res: Response<unknown, PhotoLocals & ParamsLocals<RequestIdParams>>
+): Promise<void> {
+  const user = requireUser(req);
+  const { kind } = req.body as AddRequestPhotosBody;
+  const requestId = res.locals.params.id;
+  const photos = await requestPhotosService.addRequestPhotos(
+    requestId,
+    user.id,
+    kind,
+    res.locals.photos
+  );
+  res.status(201).json({
+    photos: photos.map((photo) => toRequestPhotoView(requestId, photo)),
+  });
+}
+
+export async function listRequestPhotosHandler(
+  req: Request,
+  res: Response<unknown, ParamsLocals<RequestIdParams>>
+): Promise<void> {
+  const user = requireUser(req);
+  const requestId = res.locals.params.id;
+  const photos = await requestPhotosService.listPhotosForActor(
+    requestId,
+    user.id
+  );
+  res.status(200).json({
+    photos: photos.map((photo) => toRequestPhotoView(requestId, photo)),
+  });
+}
+
+export async function getRequestPhotoHandler(
+  req: Request,
+  res: Response<unknown, ParamsLocals<RequestPhotoParams>>,
+  next: NextFunction
+): Promise<void> {
+  const user = requireUser(req);
+  const { id, photoId } = res.locals.params;
+  const filePath = await requestPhotosService.getRequestPhotoPath(
+    id,
+    photoId,
+    user.id
+  );
+  res.sendFile(filePath, (err) => {
+    if (err && !res.headersSent) {
+      next(new NotFoundError("Photo not found"));
+    }
+  });
 }

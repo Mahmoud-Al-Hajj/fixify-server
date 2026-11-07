@@ -36,7 +36,7 @@ const BOOKING_FLOW = [
   "2. Customer: GET /providers/{id}/slots, then POST /requests with one of the starts. Note the request id.",
   "3. Provider: GET /requests/{id}/issue-card, then POST /requests/{id}/quote.",
   "4. Customer: POST /requests/{id}/quote/accept. The job is scheduled and its first visit booked.",
-  "5. Provider: POST /requests/{id}/start, then POST /requests/{id}/complete, then POST /requests/{id}/mark-paid.",
+  "5. Provider: POST /requests/{id}/start, then POST /requests/{id}/complete, then POST /requests/{id}/mark-paid. Before and after photos go to POST /requests/{id}/photos.",
   "6. Customer: POST /requests/{id}/review.",
 ].join("\n");
 

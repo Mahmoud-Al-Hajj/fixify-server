@@ -23,7 +23,8 @@ import {
   TooManyRequestsError,
   ValidationError,
 } from "../constants/errors";
-import { INTAKE_PHOTO_DIR, UPLOADS_DIR, loadOwnSession } from "./intake";
+import { INTAKE_PHOTO_DIR, loadOwnSession } from "./intake";
+import { UPLOADS_DIR } from "./photo-files";
 import { diagnose, type DiagnosisInput } from "./ai/gemini";
 import { hedgedDiagnose, HedgeFailedError } from "./ai/hedged-diagnose";
 import { PROMPT_VERSION } from "./ai/diagnosis-prompt";

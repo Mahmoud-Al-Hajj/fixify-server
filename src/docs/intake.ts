@@ -6,7 +6,6 @@ import type { toMessageView } from "../controllers/intake";
 import { diagnosisSchema } from "../libraries/ai/diagnosis-schema";
 import type { DiagnosisView, getOwnSession } from "../libraries/intake";
 import type { startAnalysis } from "../libraries/intake-analysis";
-import { MAX_PHOTO_BYTES, MAX_PHOTOS } from "../middlewares/upload";
 import type { IntakeSession } from "../models-db/intake";
 import {
   customerTurnSchema,
@@ -18,11 +17,10 @@ import {
   docsRegistry,
   documented,
   jsonResponse,
+  multipartPhotos,
   parameters,
   sameShape,
-  toSchema,
   type Paths,
-  type RequestBody,
 } from "./convert";
 
 const TAGS = ["intake-sessions"];
@@ -99,36 +97,12 @@ const aiStatus = documented(z.enum(AI_STATUS), {
 // A customer turn: multipart, so photos can travel with the text. The text
 // field comes from the route schema; the photos are checked by
 // middlewares/upload.ts.
-const turnSchema = toSchema(customerTurnSchema, "input");
-const TURN_BODY: RequestBody = {
-  required: true,
-  content: {
-    "multipart/form-data": {
-      schema: {
-        ...turnSchema,
-        properties: {
-          ...turnSchema.properties,
-          body: {
-            ...(typeof turnSchema.properties?.body === "object"
-              ? turnSchema.properties.body
-              : {}),
-            description: "What is wrong, in any language.",
-            examples: ["The pipe under the kitchen sink is leaking."],
-          },
-          photos: {
-            type: "array",
-            maxItems: MAX_PHOTOS,
-            // Swagger UI 5 shows a file picker for format: binary (not for
-            // contentMediaType, which it fills with random text).
-            items: { type: "string", format: "binary" },
-            description: `Up to ${MAX_PHOTOS} JPEG or PNG photos, at most ${MAX_PHOTO_BYTES / (1024 * 1024)} MB each; the type is checked from the file's bytes.`,
-          },
-        },
-      },
-      encoding: { photos: { contentType: "image/jpeg, image/png" } },
-    },
+const TURN_BODY = multipartPhotos(customerTurnSchema, {
+  body: {
+    description: "What is wrong, in any language.",
+    example: "The pipe under the kitchen sink is leaking.",
   },
-};
+});
 
 const TURN_RULES = `Send text, photos, or both; an empty turn is a 400. A session holds a limited number of photos in all: over it, 400 ${ERROR_CODE.SESSION_PHOTO_CAP_REACHED}. A photo over the size limit is a 413.`;
 

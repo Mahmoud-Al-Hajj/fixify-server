@@ -16,6 +16,7 @@ export const JOB_EVENT_TYPE = {
   VISIT_RESCHEDULE_DECLINED: "visit_reschedule_declined",
   VISIT_RESCHEDULE_WITHDRAWN: "visit_reschedule_withdrawn",
   VISIT_ADDED: "visit_added",
+  PHOTOS_ADDED: "photos_added",
 } as const;
 
 export type JobEventType = (typeof JOB_EVENT_TYPE)[keyof typeof JOB_EVENT_TYPE];

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { JSONSchema } from "zod/v4/core";
+import { MAX_PHOTO_BYTES, MAX_PHOTOS } from "../middlewares/upload";
 import { phoneRegex } from "../routes/auth.schema";
 import { HOUR_MINUTE } from "../routes/providers.schema";
 import {
@@ -224,6 +225,46 @@ export function jsonBody(
       "application/json": {
         schema: converted,
         examples: SHOW_DEMO_DATA ? examples : (productionExamples ?? examples),
+      },
+    },
+  };
+}
+
+// A multipart upload: the route schema's text fields, each with a
+// description (and an example), plus the photos middlewares/upload.ts
+// accepts. A field that is not in the schema throws.
+export function multipartPhotos(
+  schema: z.ZodType,
+  fields: Record<string, { description: string; example: string }>
+): RequestBody {
+  const converted = toSchema(schema, "input");
+  for (const [name, { description, example }] of Object.entries(fields)) {
+    const property = converted.properties?.[name];
+    if (typeof property !== "object") {
+      throw new Error(`multipartPhotos: no field ${name} in the schema`);
+    }
+    property.description = description;
+    property.examples = [example];
+  }
+  return {
+    required: true,
+    content: {
+      "multipart/form-data": {
+        schema: {
+          ...converted,
+          properties: {
+            ...converted.properties,
+            photos: {
+              type: "array",
+              maxItems: MAX_PHOTOS,
+              // Swagger UI 5 shows a file picker for format: binary (not for
+              // contentMediaType, which it fills with random text).
+              items: { type: "string", format: "binary" },
+              description: `Up to ${MAX_PHOTOS} JPEG or PNG photos, at most ${MAX_PHOTO_BYTES / (1024 * 1024)} MB each; the type is checked from the file's bytes.`,
+            },
+          },
+        },
+        encoding: { photos: { contentType: "image/jpeg, image/png" } },
       },
     },
   };

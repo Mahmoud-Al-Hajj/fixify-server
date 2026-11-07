@@ -1,6 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, unlink, writeFile } from "node:fs/promises";
-import path from "node:path";
 import type { PoolConnection } from "mysql2/promise";
 import { withTransaction } from "../models-db/pool";
 import {
@@ -27,48 +25,20 @@ import {
 } from "../constants/errors";
 import { logger } from "../config/logger";
 import { storedDiagnosisSchema, type Diagnosis } from "./ai/diagnosis-schema";
+import {
+  photoFilePath,
+  removePhotos,
+  storePhotos,
+  type Photo,
+} from "./photo-files";
 
-export const UPLOADS_DIR = path.resolve("uploads");
 export const INTAKE_PHOTO_DIR = "intake";
 // Disk space, not the AI: only the newest few photos go to the model.
 const MAX_PHOTOS_PER_SESSION = 20;
 
-export interface Photo {
-  buffer: Buffer;
-  extension: "jpg" | "png";
-}
-
 export interface CustomerTurn {
   body: string | null;
   photos: readonly Photo[];
-}
-
-// Writes each photo under a server-generated name and returns the paths
-// relative to UPLOADS_DIR, which is what intake_photos.url stores.
-async function storePhotos(turn: CustomerTurn): Promise<string[]> {
-  await mkdir(path.join(UPLOADS_DIR, INTAKE_PHOTO_DIR), { recursive: true });
-  return Promise.all(
-    turn.photos.map(async (photo) => {
-      const url = `${INTAKE_PHOTO_DIR}/${randomUUID()}.${photo.extension}`;
-      await writeFile(path.join(UPLOADS_DIR, url), photo.buffer);
-      return url;
-    })
-  );
-}
-
-// Photos are written before the transaction; if it fails they are removed
-// again, so no file is left without its row.
-async function removePhotos(urls: readonly string[]): Promise<void> {
-  const results = await Promise.allSettled(
-    urls.map((url) => unlink(path.join(UPLOADS_DIR, url)))
-  );
-  for (const result of results) {
-    if (result.status === "rejected") {
-      logger.error("could not remove orphaned intake photo", {
-        error: String(result.reason),
-      });
-    }
-  }
 }
 
 // Stores the turn's photos, then, in one transaction, runs `prepare` (create
@@ -82,7 +52,7 @@ async function recordCustomerTurn(
   if (turn.body === null && turn.photos.length === 0) {
     throw new ValidationError("Send a message, a photo, or both");
   }
-  const urls = await storePhotos(turn);
+  const urls = await storePhotos(INTAKE_PHOTO_DIR, turn.photos);
   try {
     return await withTransaction(async (conn) => {
       await prepare(conn);
@@ -251,5 +221,5 @@ export async function getIntakePhotoPath(
   if (url === null) {
     throw new NotFoundError("Photo not found");
   }
-  return path.join(UPLOADS_DIR, url);
+  return photoFilePath(url);
 }

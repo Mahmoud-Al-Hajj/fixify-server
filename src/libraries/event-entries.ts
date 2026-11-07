@@ -32,6 +32,7 @@ export const PUBLIC_DETAILS: Record<JobEventType, readonly string[]> = {
     "scheduledStart",
     "finishedVisitId",
   ],
+  [JOB_EVENT_TYPE.PHOTOS_ADDED]: ["kind", "count"],
 };
 
 export type EventDetails = Record<string, string | number | boolean>;

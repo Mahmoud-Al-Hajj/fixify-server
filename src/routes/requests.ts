@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { authenticate } from "../middlewares/authenticate";
 import { validateBody, validate } from "../middlewares/validate";
+import { uploadPhotos } from "../middlewares/upload";
 import {
   createRequestSchema,
   createReviewSchema,
@@ -12,6 +13,8 @@ import {
   proposeRescheduleSchema,
   addFollowUpVisitSchema,
   changeRequestedStartSchema,
+  addRequestPhotosSchema,
+  requestPhotoParamsSchema,
 } from "./requests.schema";
 import {
   createRequestHandler,
@@ -35,6 +38,9 @@ import {
   withdrawRescheduleHandler,
   addFollowUpVisitHandler,
   changeRequestedStartHandler,
+  addRequestPhotosHandler,
+  listRequestPhotosHandler,
+  getRequestPhotoHandler,
 } from "../controllers/requests";
 
 export const requestsRouter = Router();
@@ -151,4 +157,21 @@ requestsRouter.post(
   validate("params", requestIdParamsSchema),
   validateBody(addFollowUpVisitSchema),
   addFollowUpVisitHandler
+);
+requestsRouter.post(
+  "/:id/photos",
+  validate("params", requestIdParamsSchema),
+  uploadPhotos,
+  validateBody(addRequestPhotosSchema),
+  addRequestPhotosHandler
+);
+requestsRouter.get(
+  "/:id/photos",
+  validate("params", requestIdParamsSchema),
+  listRequestPhotosHandler
+);
+requestsRouter.get(
+  "/:id/photos/:photoId",
+  validate("params", requestPhotoParamsSchema),
+  getRequestPhotoHandler
 );

@@ -1,7 +1,7 @@
 import multer from "multer";
 import type { Request, Response, NextFunction } from "express";
 import { ValidationError } from "../constants/errors";
-import type { Photo } from "../libraries/intake";
+import type { Photo } from "../libraries/photo-files";
 
 export const MAX_PHOTOS = 5;
 export const MAX_PHOTO_BYTES = 5 * 1024 * 1024;

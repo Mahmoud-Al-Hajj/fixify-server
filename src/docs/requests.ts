@@ -3,6 +3,7 @@ import { AI_STATUS } from "../constants/ai-status";
 import { DEFAULT_VISIT_MINUTES } from "../constants/booking";
 import { CATEGORY_NAMES, type CategoryName } from "../constants/categories";
 import { ITEM_SOURCE } from "../constants/item-source";
+import { PHOTO_KIND } from "../constants/photo-kind";
 import { PRICE_STATUS } from "../constants/price-status";
 import {
   REQUEST_ACTOR_ROLE,
@@ -12,13 +13,17 @@ import {
 import { SERVICE_TYPE } from "../constants/service-type";
 import { VISIT_STATUS } from "../constants/visit-status";
 import type { toMessageView } from "../controllers/intake";
+import type { toRequestPhotoView } from "../controllers/requests";
+import { MAX_PHOTOS_PER_REQUEST } from "../libraries/request-photos";
 import type { IssueCard } from "../libraries/requests";
+import { MAX_PHOTOS } from "../middlewares/upload";
 import type { RequestItem } from "../models-db/request-items";
 import type { NamedRequest, Request } from "../models-db/requests";
 import type { Review } from "../models-db/reviews";
 import type { Visit } from "../models-db/visits";
 import {
   addFollowUpVisitSchema,
+  addRequestPhotosSchema,
   changeRequestedStartSchema,
   createRequestSchema,
   createReviewSchema,
@@ -28,6 +33,7 @@ import {
   proposeQuoteSchema,
   proposeRescheduleSchema,
   requestIdParamsSchema,
+  requestPhotoParamsSchema,
   saveRequestItemsSchema,
   visitIdParamsSchema,
 } from "../routes/requests.schema";
@@ -44,6 +50,7 @@ import {
   documented,
   jsonBody,
   jsonResponse,
+  multipartPhotos,
   parameters,
   sameShape,
   toSchema,
@@ -231,6 +238,29 @@ sameShape<
     messages: Array<ReturnType<typeof toMessageView>>;
   }
 >(true);
+
+// controllers/requests.ts toRequestPhotoView: a job photo whose url is the
+// authenticated route that serves it.
+const requestPhoto = z
+  .object({
+    id: z.uuid(),
+    kind: documented(z.enum(PHOTO_KIND), {
+      description: "before or after the work, or extra.",
+    }),
+    url: documented(z.string(), {
+      description: "GET this path, with the token, to load the photo.",
+      examples: [
+        "/requests/00000000-0000-4000-8000-000000000001/photos/00000000-0000-4000-8000-000000000001",
+      ],
+    }),
+    createdAt: wallClock,
+  })
+  .register(docsRegistry, { id: "RequestPhoto" });
+sameShape<z.output<typeof requestPhoto>, ReturnType<typeof toRequestPhotoView>>(
+  true
+);
+
+const photosBody = z.object({ photos: z.array(requestPhoto) });
 
 const requestBody = z.object({ request });
 
@@ -621,6 +651,64 @@ export const requestsPaths: Paths = {
       responses: {
         201: jsonResponse("The request with its visits", requestDetails),
         ...errors(400, 401, 403, 404, 409, 413),
+      },
+    },
+  },
+  "/requests/{id}/photos": {
+    post: {
+      ...ON_REQUEST,
+      operationId: "addRequestPhotos",
+      summary: "Add job photos",
+      description: whoCanCall(
+        "the assigned provider",
+        `Up to ${MAX_PHOTOS} photos per upload, all of one kind, while the job is scheduled, in progress or completed (a pending, rejected or cancelled job is a 409). A request holds at most ${MAX_PHOTOS_PER_REQUEST} photos (400 over it). Each upload shows on the timeline and in the customer's notifications. Photos cannot be deleted.`
+      ),
+      parameters: REQUEST_ID,
+      requestBody: multipartPhotos(addRequestPhotosSchema, {
+        kind: {
+          description: "before or after the work, or extra.",
+          example: PHOTO_KIND.BEFORE,
+        },
+      }),
+      responses: {
+        201: jsonResponse("The photos just added", photosBody),
+        ...errors(400, 401, 403, 404, 409, 413),
+      },
+    },
+    get: {
+      ...ON_REQUEST,
+      operationId: "listRequestPhotos",
+      summary: "The job photos",
+      description: whoCanCall(
+        "the request's customer or provider",
+        "Oldest first."
+      ),
+      parameters: REQUEST_ID,
+      responses: {
+        200: jsonResponse("The photos", photosBody),
+        ...errors(400, 401, 403, 404),
+      },
+    },
+  },
+  "/requests/{id}/photos/{photoId}": {
+    get: {
+      ...ON_REQUEST,
+      operationId: "getRequestPhoto",
+      summary: "One job photo",
+      description: whoCanCall("the request's customer or provider"),
+      parameters: parameters("path", requestPhotoParamsSchema, {
+        id: REQUEST_ID_DOC,
+        photoId: {
+          description: "A photo id, from GET /requests/{id}/photos.",
+          example: "00000000-0000-4000-8000-000000000001",
+        },
+      }),
+      responses: {
+        200: {
+          description: "The photo",
+          content: { "image/jpeg": {}, "image/png": {} },
+        },
+        ...errors(400, 401, 403, 404),
       },
     },
   },
