@@ -1,0 +1,54 @@
+{
+  "name": "fixify-server",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "tsc": "tsc",
+    "dev": "tsx watch src/server.ts",
+    "watch": "tsc --noEmit --watch",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "test": "tsx --test \"src/**/*.test.ts\"",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "tsc --noEmit && tsc -p tsconfig.scripts.json && prettier --check .",
+    "replay": "tsx scripts/replay-diagnosis.ts",
+    "smoke": "tsx scripts/smoke.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "scarfSettings": {
+    "enabled": false
+  },
+  "dependencies": {
+    "@google/genai": "2.24.0",
+    "bcrypt": "^6.0.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "express-rate-limit": "^8.7.0",
+    "helmet": "^8.3.0",
+    "jsonwebtoken": "^9.0.3",
+    "multer": "^2.4.0",
+    "mysql2": "^3.24.3",
+    "swagger-ui-express": "5.0.1",
+    "winston": "^3.19.0",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "@seriousme/openapi-schema-validator": "2.11.0",
+    "@types/bcrypt": "^6.0.0",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/multer": "^2.2.0",
+    "@types/node": "^26.5.0",
+    "@types/swagger-ui-express": "4.1.8",
+    "prettier": "3.9.6",
+    "tsx": "^4.23.13",
+    "typescript": "^7.0.2"
+  }
+}
