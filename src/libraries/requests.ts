@@ -31,6 +31,7 @@ import {
 import {
   insertJobEvent,
   findAiStatusAtBooking,
+  findLatestQuoteReason,
   listEventsForRequest,
 } from "../models-db/job-events";
 import { beirutNow, wallClockToDate } from "../models-db/format-datetime";
@@ -295,6 +296,29 @@ export async function getRequestForActor(
     visits,
     hasReview: review !== null,
   };
+}
+
+// GET /requests/:id: the details plus the reason for a revised quote that
+// waits for the customer. There is no column for it; while a revision is
+// open, the latest QUOTE_PROPOSED event is that revision.
+export async function getRequestDetailsForActor(
+  requestId: string,
+  actorUserId: string
+): Promise<
+  Awaited<ReturnType<typeof getRequestForActor>> & {
+    revisionReason: string | null;
+  }
+> {
+  const details = await getRequestForActor(requestId, actorUserId);
+  const { request } = details;
+  const revisionOpen =
+    request.status === REQUEST_STATUS.IN_PROGRESS &&
+    request.priceStatus === PRICE_STATUS.PROPOSED &&
+    request.revisedPrice !== null;
+  const revisionReason = revisionOpen
+    ? await findLatestQuoteReason(request.id)
+    : null;
+  return { ...details, revisionReason };
 }
 
 // The job's history for either party, oldest first, in its public shape: no

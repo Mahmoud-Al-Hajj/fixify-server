@@ -167,7 +167,7 @@ sameShape<
   NamedRequestAsServed & { nextVisit: VisitView | null }
 >(true);
 
-// controllers/requests.ts toRequestDetailsView: GET /requests/:id and every
+// controllers/requests.ts toRequestDetailsView: every
 // visit action. Checked against the model types; the controller's own code
 // is not covered.
 const requestDetails = z
@@ -182,6 +182,30 @@ sameShape<
   z.output<typeof requestDetails>,
   {
     request: NamedRequestAsServed & { visits: VisitView[]; hasReview: boolean };
+  }
+>(true);
+
+// controllers/requests.ts getRequestHandler: RequestDetails plus the reason
+// for an open revised quote. Only GET /requests/:id serves it.
+const requestDetailsWithReason = z
+  .object({
+    request: requestDetails.shape.request.extend({
+      revisionReason: documented(z.string().nullable(), {
+        description:
+          "Why the provider revised the quote, while the revision waits for the customer (job in_progress, priceStatus proposed, revisedPrice set). null otherwise, including after it is accepted or declined.",
+        examples: ["The valve is corroded and has to be replaced too."],
+      }),
+    }),
+  })
+  .register(docsRegistry, { id: "RequestDetailsWithReason" });
+sameShape<
+  z.output<typeof requestDetailsWithReason>,
+  {
+    request: NamedRequestAsServed & {
+      visits: VisitView[];
+      hasReview: boolean;
+      revisionReason: string | null;
+    };
   }
 >(true);
 
@@ -408,7 +432,7 @@ export const requestsPaths: Paths = {
       description: whoCanCall("the request's customer or provider"),
       parameters: REQUEST_ID,
       responses: {
-        200: jsonResponse("The request", requestDetails),
+        200: jsonResponse("The request", requestDetailsWithReason),
         ...errors(400, 401, 403, 404),
       },
     },

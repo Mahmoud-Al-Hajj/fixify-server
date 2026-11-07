@@ -62,6 +62,29 @@ export async function findAiStatusAtBooking(
     : null;
 }
 
+// The reason in the request's latest QUOTE_PROPOSED payload; null when there
+// is none or it carries no reason (a first quote). Served by
+// idx_events_request_time (request_id, then created_at read backwards).
+export async function findLatestQuoteReason(
+  requestId: string
+): Promise<string | null> {
+  const [rows] = await pool.query<PayloadRow[]>(
+    `SELECT payload FROM job_events
+     WHERE request_id = ? AND event_type = ?
+     ORDER BY created_at DESC, id DESC
+     LIMIT 1`,
+    [requestId, JOB_EVENT_TYPE.QUOTE_PROPOSED]
+  );
+  const raw = rows[0]?.payload;
+  if (raw === undefined || raw === null) return null;
+  const payload: unknown = JSON.parse(raw);
+  const reason =
+    typeof payload === "object" && payload !== null && "reason" in payload
+      ? payload.reason
+      : null;
+  return typeof reason === "string" ? reason : null;
+}
+
 // A stored event as the services read it; the payload is parsed but not
 // filtered (the public view is libraries/event-entries.ts).
 export interface JobEvent {
