@@ -124,7 +124,11 @@ suggested slots (deterministic) ──customer picks slot──> request created
 
 The chosen slot is stored in `requests.requested_start`. It is not reserved until a quote
 is accepted and the first visit is inserted; at that point the visits unique key is the
-guarantee (see "Double-booking"). While the request is `pending`, the customer may change
+guarantee (see "Double-booking"). A pending request holds no time against other customers
+(two customers may both have a pending request for 10:00; the first accept wins and the
+other gets a 409), but creating a request and changing its requested start are refused
+(409) when the time overlaps an open visit of the provider or the same customer's own
+pending request to the same provider. While the request is `pending`, the customer may change
 it (`POST /requests/:id/requested-start`): a future time that fits the provider's working
 hours for `COALESCE(estimated_duration_minutes, 60)` (400 otherwise), the same time again is
 a no-op, and the proposed quote stands. It reserves nothing; this is how a customer gets past
@@ -458,7 +462,7 @@ Two layers, both required:
    UPDATE` (`lockProviderForUpdate`) before any plain read. Only then does it check for an
    open visit of that provider whose `[scheduled_start, scheduled_end)` overlaps the new one
    (a visit being moved is excluded), and insert or move the visit. All three go through
-   `reserveSlot` (`libraries/visits.ts`). Every booking for a provider takes the same lock
+   `reserveSlot` (`libraries/slot-reservation.ts`). Every booking for a provider takes the same lock
    first, so the check cannot race. No consistent (plain) read may come before the lock:
    InnoDB takes the snapshot at the first consistent read, so a read before the lock could
    miss a visit committed while waiting. A locking read such as `lockRequestForUpdate` may
@@ -475,6 +479,19 @@ Two layers, both required:
 
 Suggested slots (see "Slots are deterministic") are only suggestions; they do not replace
 either layer.
+
+**Creation-time guard.** A pending request reserves nothing, but a customer cannot stack
+overlapping requests on one provider. `createRequest`, `createRequestFromSession` and
+`changeRequestedStart` call `assertRequestTimeFree` (`libraries/slot-reservation.ts`) in
+their transaction: `reserveSlot` (provider lock, open-visit overlap) and then
+`hasOverlappingPendingRequest` (this customer's pending requests to this provider; a
+request with no estimate counts 60 minutes; the request being moved is excluded). Both
+are `ConflictError` (`CONFLICT`), never retried by the server. The same provider lock
+serializes two requests racing for one slot. Lock order: booking from a session locks the
+session row, then the provider (before its first plain read), then inserts;
+`changeRequestedStart` locks the provider, then updates the request row (the order of
+quote acceptance, so the two cannot deadlock). Different customers are not checked
+against each other's pending requests.
 
 **Deadlocks.** An INSERT into `visits` or `job_events` checks its foreign key with a shared
 lock on the parent `requests` row, so a transaction that writes a visit before that insert
@@ -615,7 +632,8 @@ Rules, all load-bearing:
   The `POST /requests` body is a union of two strict shapes: search (`description`,
   `serviceType`, `estimatedDurationMinutes`) or session (`intakeSessionId`). Sending any
   of those three with `intakeSessionId` matches neither shape → 400. Booking locks the
-  session row; the visit and the provider lock stay at quote acceptance. Visit length at
+  session row, then the provider (see "Double-booking", creation-time guard); the visit
+  is still created at quote acceptance. Visit length at
   quote acceptance = `COALESCE(estimated_duration_minutes, 60)` (`DEFAULT_VISIT_MINUTES`);
   `estimated_duration_minutes` stays `NULL` when not estimated. `deriveBookingFields` and
   `buildDescription` are pure functions. An intake booking's `REQUEST_CREATED` payload is

@@ -20,6 +20,7 @@ import {
   findProviderAcceptance,
   providerAcceptsCategory,
   listAvailability,
+  lockProviderForUpdate,
 } from "../models-db/providers";
 import {
   findVisitsForRequest,
@@ -84,6 +85,7 @@ import {
 import { buildDescription, deriveBookingFields } from "./booking-from-session";
 import { toEventEntry, type EventEntry } from "./event-entries";
 import { fitsWorkingHours } from "./slot-rules";
+import { assertRequestTimeFree } from "./slot-reservation";
 
 // A request this service just wrote; missing only if deleted concurrently,
 // which no endpoint does.
@@ -138,6 +140,30 @@ async function assertBookable(
   }
 }
 
+// A pending request holds no slot, but its time must not clash with an open
+// visit of the provider or this customer's own pending request to them.
+// Legacy requests with no requestedStart have no time to check.
+async function assertTimeFree(
+  conn: PoolConnection,
+  input: Pick<
+    CreateRequestInput,
+    "customerId" | "providerId" | "requestedStart"
+  > & {
+    estimatedDurationMinutes: number | null;
+  },
+  excludeRequestId: string | null
+): Promise<void> {
+  if (input.requestedStart === null) return;
+  const minutes = input.estimatedDurationMinutes ?? DEFAULT_VISIT_MINUTES;
+  await assertRequestTimeFree(conn, {
+    customerId: input.customerId,
+    providerId: input.providerId,
+    start: input.requestedStart,
+    end: new Date(input.requestedStart.getTime() + minutes * 60_000),
+    excludeRequestId,
+  });
+}
+
 export async function createRequest(
   input: CreateRequestInput
 ): Promise<Request> {
@@ -145,6 +171,7 @@ export async function createRequest(
   const id = randomUUID();
 
   await withTransaction(async (conn) => {
+    await assertTimeFree(conn, input, null);
     await insertRequest(conn, { id, ...input, intakeSessionId: null });
     await insertJobEvent(conn, {
       id: randomUUID(),
@@ -186,6 +213,10 @@ export async function createRequestFromSession(
     if (!session || session.customerId !== input.customerId) {
       throw new NotFoundError("Intake session not found");
     }
+    // Before the first plain read (readSessionFreeze), so the overlap checks
+    // below see every booking committed while we waited. Lock order: session,
+    // then provider.
+    await lockProviderForUpdate(conn, input.providerId);
     if ((await readSessionFreeze(conn, input.intakeSessionId)).booked) {
       throw new ConflictError(
         "This problem has already been booked; describe a new one in a new session",
@@ -211,6 +242,7 @@ export async function createRequestFromSession(
       },
       categoryName
     );
+    await assertTimeFree(conn, { ...input, ...derived }, null);
     await insertRequest(conn, {
       ...input,
       id,
@@ -840,6 +872,18 @@ export async function changeRequestedStart(
   }
 
   await withTransaction(async (conn) => {
+    // Provider lock first, then the request row (the guarded UPDATE): the
+    // same order as quote acceptance.
+    await assertTimeFree(
+      conn,
+      {
+        customerId: request.customerId,
+        providerId: request.providerId,
+        requestedStart: start,
+        estimatedDurationMinutes: request.estimatedDurationMinutes,
+      },
+      request.id
+    );
     const changed = await updateRequestedStart(conn, {
       id: request.id,
       status: REQUEST_STATUS.PENDING,

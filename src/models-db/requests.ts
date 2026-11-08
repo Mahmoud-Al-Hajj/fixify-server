@@ -7,9 +7,11 @@ import { pool, isDbError } from "./pool";
 import { formatMysqlDateTime } from "./format-datetime";
 import {
   REQUEST_ACTOR_ROLE,
+  REQUEST_STATUS,
   type RequestActorRole,
   type RequestStatus,
 } from "../constants/request-status";
+import { DEFAULT_VISIT_MINUTES } from "../constants/booking";
 import { ConflictError, ERROR_CODE } from "../constants/errors";
 import type { ServiceType } from "../constants/service-type";
 import { PRICE_STATUS, type PriceStatus } from "../constants/price-status";
@@ -367,6 +369,39 @@ export async function updateRequestedStart(
     [input.requestedStart, input.id, input.status, input.fromRequestedStart]
   );
   return result.affectedRows === 1;
+}
+
+// Whether this customer already has a pending request to this provider whose
+// [requested_start, requested_start + duration) overlaps [start, end), other
+// than excludeRequestId (the request being moved). A request nobody estimated
+// counts DEFAULT_VISIT_MINUTES, as its visit would. Run it after
+// lockProviderForUpdate. Served by idx_req_customer_status.
+export async function hasOverlappingPendingRequest(
+  conn: PoolConnection,
+  customerId: string,
+  providerId: string,
+  start: Date,
+  end: Date,
+  excludeRequestId: string | null
+): Promise<boolean> {
+  const [rows] = await conn.query<RowDataPacket[]>(
+    `SELECT 1 FROM requests
+     WHERE customer_id = ? AND status = ? AND provider_id = ?
+       AND requested_start < ?
+       AND DATE_ADD(requested_start, INTERVAL COALESCE(estimated_duration_minutes, ?) MINUTE) > ?
+       AND NOT (id <=> ?)
+     LIMIT 1`,
+    [
+      customerId,
+      REQUEST_STATUS.PENDING,
+      providerId,
+      end,
+      DEFAULT_VISIT_MINUTES,
+      start,
+      excludeRequestId,
+    ]
+  );
+  return rows.length > 0;
 }
 
 export async function findRequestById(id: string): Promise<Request | null> {
