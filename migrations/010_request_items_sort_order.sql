@@ -15,4 +15,3 @@ JOIN (
 ) numbered ON numbered.id = ri.id
 SET ri.sort_order = numbered.n, ri.updated_at = ri.updated_at;
 
-ALTER TABLE request_items ALTER COLUMN sort_order DROP DEFAULT;
