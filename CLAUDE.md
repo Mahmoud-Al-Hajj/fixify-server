@@ -78,7 +78,9 @@ customer *confirmed*; the AI's original output stays on the intake session.
 **Request item — one part or material the provider needs for the job.** Belongs to one
 request. Rows are seeded from the AI's suggested parts list when the request is created
 (`source = 'ai'`); the assigned provider may edit, add, or remove them from the issue
-card, and any row the provider creates or edits is marked `source = 'provider'`.
+card, and any row the provider creates or edits is marked `source = 'provider'`. The list
+keeps the provider's order in `sort_order` (every save rewrites it from the order sent);
+read it `ORDER BY sort_order, id`, never by `created_at`, which ties within one insert.
 
 **Visit — one time the provider shows up.** A request has zero or more visits. This split
 is what makes rescheduling, follow-ups, revisits and multi-day work possible without
@@ -432,6 +434,8 @@ options laid out.
   to date.
 - Migration 009 (`notification_reads`) must be applied before deploying the code
   that reads it, or `GET /notifications` fails.
+- Migration 010 (`request_items.sort_order`) must be applied before deploying the code
+  that reads it, or every parts-list read and save fails.
 
 
 ### Operations that require a transaction

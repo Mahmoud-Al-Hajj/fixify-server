@@ -50,6 +50,7 @@ import {
   insertRequestItems,
   updateRequestItem,
   deleteRequestItems,
+  setRequestItemOrder,
   type RequestItem,
 } from "../models-db/request-items";
 import { ITEM_SOURCE } from "../constants/item-source";
@@ -468,6 +469,7 @@ export async function saveRequestItems(
     const removed = [...current.keys()].filter((id) => !kept.has(id));
     const added: RequestItem[] = [];
     const updated: RequestItem[] = [];
+    const order: string[] = [];
     for (const { id, ...fields } of input) {
       const before = id ? current.get(id) : undefined;
       const item = {
@@ -475,6 +477,7 @@ export async function saveRequestItems(
         id: id ?? randomUUID(),
         source: ITEM_SOURCE.PROVIDER,
       };
+      order.push(item.id);
       if (!before) {
         added.push(item);
       } else if (
@@ -486,12 +489,14 @@ export async function saveRequestItems(
         updated.push(item);
       }
     }
-    if (added.length + updated.length + removed.length === 0) return;
     await deleteRequestItems(conn, removed);
     await insertRequestItems(conn, request.id, added);
     for (const item of updated) {
       await updateRequestItem(conn, item);
     }
+    await setRequestItemOrder(conn, request.id, order);
+    // A save that only reorders changes no part, so it writes no event.
+    if (added.length + updated.length + removed.length === 0) return;
     await insertJobEvent(conn, {
       id: randomUUID(),
       requestId: request.id,

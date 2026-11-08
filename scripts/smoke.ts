@@ -428,6 +428,30 @@ async function journey(): Promise<void> {
       );
     }
   }
+  // The provider's order is kept, and a save that only reorders sticks.
+  const saved = list(card, "issueCard.items").map((item) => ({
+    id: text(item, "id"),
+    name: text(item, "name"),
+    quantity: Number(at(item, "quantity")),
+    unit: at(item, "unit"),
+    estimatedUnitPrice: at(item, "estimatedUnitPrice"),
+  }));
+  for (const [label, order, first] of [
+    ["provider reverses the parts (reorder only)", [1, 0], "PTFE tape"],
+    ["provider restores the order", [0, 1], "Sink trap washer"],
+  ] as const) {
+    await step(label, 200, () =>
+      api("PUT", req("/items"), provider, {
+        items: order.map((index) => saved[index]),
+      })
+    );
+    await step(
+      `the parts come back in that order (${first} first)`,
+      200,
+      () => api("GET", req(""), customer),
+      [["request.items.0.name", first]]
+    );
+  }
   await step("register a user who is not on the request", 201, () =>
     reg("stranger", {})
   );
