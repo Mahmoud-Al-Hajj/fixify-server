@@ -434,9 +434,10 @@ options laid out.
   to date.
 - Migration 009 (`notification_reads`) must be applied before deploying the code
   that reads it, or `GET /notifications` fails.
-- Migration 010 (`request_items.sort_order`) must be applied before deploying the code
-  that reads it, or every parts-list read and save fails. Its `DEFAULT 0` stays so the
-  previously deployed code (which inserts without the column) keeps working in between.
+- Migrations 010 and 011 (`request_items.sort_order`) must both be applied before deploying
+  the code that reads it, or every parts-list read and save fails. 011 keeps `DEFAULT 0`
+  (010 drops it) so the previously deployed code, which inserts without the column,
+  keeps working in between.
 
 
 ### Operations that require a transaction
