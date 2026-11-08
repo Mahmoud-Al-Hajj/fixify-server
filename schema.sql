@@ -168,7 +168,7 @@ CREATE TABLE request_items (
   unit                  VARCHAR(20),
   estimated_unit_price  DECIMAL(10,2),
   source                VARCHAR(10) NOT NULL DEFAULT 'ai',
-  sort_order            SMALLINT UNSIGNED NOT NULL,       -- position in the provider's list (migration 010)
+  sort_order            SMALLINT UNSIGNED NOT NULL DEFAULT 0, -- position in the provider's list (migration 010)
   created_at            DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   updated_at            DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
                                     ON UPDATE CURRENT_TIMESTAMP(3),
