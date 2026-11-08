@@ -224,13 +224,13 @@ export async function getRequestHandler(
   res: Response<unknown, ParamsLocals<RequestIdParams>>
 ): Promise<void> {
   const user = requireUser(req);
-  const { revisionReason, ...details } =
+  const { revisionReason, items, ...details } =
     await requestsService.getRequestDetailsForActor(
       res.locals.params.id,
       user.id
     );
   const view = toRequestDetailsView(details);
-  res.status(200).json({ request: { ...view.request, revisionReason } });
+  res.status(200).json({ request: { ...view.request, revisionReason, items } });
 }
 
 export async function proposeRescheduleHandler(

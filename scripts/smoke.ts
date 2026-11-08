@@ -19,6 +19,7 @@ import { readFile } from "node:fs/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { AI_STATUS } from "../src/constants/ai-status";
+import { ITEM_SOURCE } from "../src/constants/item-source";
 import { PRICE_STATUS } from "../src/constants/price-status";
 import {
   REQUEST_ACTOR_ROLE,
@@ -370,6 +371,14 @@ async function journey(): Promise<void> {
       ["issueCard.isLate", false],
     ]
   );
+  if (!liveAi) {
+    await step(
+      "request detail (customer): no parts yet, items is []",
+      200,
+      () => api("GET", req(""), customer),
+      [["request.items.length", 0]]
+    );
+  }
   await step("provider edits the parts list", 200, () =>
     api("PUT", req("/items"), provider, {
       items: [
@@ -387,6 +396,40 @@ async function journey(): Promise<void> {
         },
       ],
     })
+  );
+  const card = await step("issue card after the edit", 200, () =>
+    api("GET", req("/issue-card"), provider)
+  );
+  for (const [role, token] of [
+    [REQUEST_ACTOR_ROLE.CUSTOMER, customer],
+    [REQUEST_ACTOR_ROLE.PROVIDER, provider],
+  ] as const) {
+    const seen = await step(
+      `request detail (${role}) lists the parts`,
+      200,
+      () => api("GET", req(""), token),
+      [
+        ["request.items.length", 2],
+        ["request.items.0.name", "Sink trap washer"],
+        ["request.items.0.source", ITEM_SOURCE.PROVIDER],
+        ["request.items.1.name", "PTFE tape"],
+      ]
+    );
+    if (
+      JSON.stringify(at(seen, "request.items")) !==
+      JSON.stringify(at(card, "issueCard.items"))
+    ) {
+      throw new SmokeFailure(
+        `the ${role}'s items differ from the issue card's: ${JSON.stringify(at(seen, "request.items"))}`
+      );
+    }
+  }
+  await step("register a user who is not on the request", 201, () =>
+    reg("stranger", {})
+  );
+  const stranger = await login("stranger");
+  await step("refused: a stranger reads the request", 403, () =>
+    api("GET", req(""), stranger)
   );
 
   // Quote, acceptance, reschedule.

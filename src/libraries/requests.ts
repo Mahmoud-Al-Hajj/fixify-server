@@ -298,15 +298,17 @@ export async function getRequestForActor(
   };
 }
 
-// GET /requests/:id: the details plus the reason for a revised quote that
-// waits for the customer. There is no column for it; while a revision is
-// open, the latest QUOTE_PROPOSED event is that revision.
+// GET /requests/:id: the details plus the parts list and the reason for a
+// revised quote that waits for the customer. There is no column for the
+// reason; while a revision is open, the latest QUOTE_PROPOSED event is that
+// revision. Items are read after the ownership check in getRequestForActor.
 export async function getRequestDetailsForActor(
   requestId: string,
   actorUserId: string
 ): Promise<
   Awaited<ReturnType<typeof getRequestForActor>> & {
     revisionReason: string | null;
+    items: RequestItem[];
   }
 > {
   const details = await getRequestForActor(requestId, actorUserId);
@@ -318,7 +320,8 @@ export async function getRequestDetailsForActor(
   const revisionReason = revisionOpen
     ? await findLatestQuoteReason(request.id)
     : null;
-  return { ...details, revisionReason };
+  const items = await listRequestItems(request.id);
+  return { ...details, revisionReason, items };
 }
 
 // The job's history for either party, oldest first, in its public shape: no

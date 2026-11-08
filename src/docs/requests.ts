@@ -185,30 +185,6 @@ sameShape<
   }
 >(true);
 
-// controllers/requests.ts getRequestHandler: RequestDetails plus the reason
-// for an open revised quote. Only GET /requests/:id serves it.
-const requestDetailsWithReason = z
-  .object({
-    request: requestDetails.shape.request.extend({
-      revisionReason: documented(z.string().nullable(), {
-        description:
-          "Why the provider revised the quote, while the revision waits for the customer (job in_progress, priceStatus proposed, revisedPrice set). null otherwise, including after it is accepted or declined.",
-        examples: ["The valve is corroded and has to be replaced too."],
-      }),
-    }),
-  })
-  .register(docsRegistry, { id: "RequestDetailsWithReason" });
-sameShape<
-  z.output<typeof requestDetailsWithReason>,
-  {
-    request: NamedRequestAsServed & {
-      visits: VisitView[];
-      hasReview: boolean;
-      revisionReason: string | null;
-    };
-  }
->(true);
-
 // models-db/request-items.ts RequestItem.
 const requestItem = z
   .object({
@@ -224,6 +200,36 @@ const requestItem = z
   })
   .register(docsRegistry, { id: "RequestItem" });
 sameShape<z.output<typeof requestItem>, RequestItem>(true);
+
+// controllers/requests.ts getRequestHandler: RequestDetails plus the parts
+// list and the reason for an open revised quote. Only GET /requests/:id
+// serves it.
+const requestDetailsWithReason = z
+  .object({
+    request: requestDetails.shape.request.extend({
+      items: documented(z.array(requestItem), {
+        description:
+          "The job's parts list, same shape and order as issueCard.items. Empty when there are no parts.",
+      }),
+      revisionReason: documented(z.string().nullable(), {
+        description:
+          "Why the provider revised the quote, while the revision waits for the customer (job in_progress, priceStatus proposed, revisedPrice set). null otherwise, including after it is accepted or declined.",
+        examples: ["The valve is corroded and has to be replaced too."],
+      }),
+    }),
+  })
+  .register(docsRegistry, { id: "RequestDetailsWithReason" });
+sameShape<
+  z.output<typeof requestDetailsWithReason>,
+  {
+    request: NamedRequestAsServed & {
+      visits: VisitView[];
+      hasReview: boolean;
+      revisionReason: string | null;
+      items: RequestItem[];
+    };
+  }
+>(true);
 
 // models-db/reviews.ts Review.
 const review = z
@@ -428,8 +434,11 @@ export const requestsPaths: Paths = {
     get: {
       ...ON_REQUEST,
       operationId: "getRequest",
-      summary: "A request with its visits",
-      description: whoCanCall("the request's customer or provider"),
+      summary: "A request with its visits and parts list",
+      description: whoCanCall(
+        "the request's customer or provider",
+        "Includes the job's parts list (items), the same list the provider sees on the issue card."
+      ),
       parameters: REQUEST_ID,
       responses: {
         200: jsonResponse("The request", requestDetailsWithReason),
