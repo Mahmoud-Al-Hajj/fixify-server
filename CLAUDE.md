@@ -474,7 +474,9 @@ Two layers, both required:
    miss a visit committed while waiting. A locking read such as `lockRequestForUpdate` may
    precede it (it reads the latest data and fixes no snapshot); add-follow-up and reschedule
    accept do exactly that, locking the request row first in the same order as cancel. An
-   overlap maps to a `ConflictError`. This is the one approved exception to "no
+   overlap maps to a `ConflictError` with code `CONFLICT` here (the client reads it at
+   accept as "this time was just taken"); only the creation-time guard below uses
+   `TIME_OVERLAP`. This is the one approved exception to "no
    check-then-insert"; do not copy the pattern without the lock.
 2. **Unique key.** `visits` has a unique key on `(provider_id, active_slot)`, where
    `active_slot` is a generated column that is `NULL` for cancelled and done visits
@@ -492,7 +494,8 @@ overlapping requests on one provider. `createRequest`, `createRequestFromSession
 their transaction: `reserveSlot` (provider lock, open-visit overlap) and then
 `hasOverlappingPendingRequest` (this customer's pending requests to this provider; a
 request with no estimate counts 60 minutes; the request being moved is excluded). Both
-are `ConflictError` (`CONFLICT`), never retried by the server. The same provider lock
+are `ConflictError` with code `TIME_OVERLAP` (`reserveSlot` takes it as `overlapCode`;
+its other callers leave it out and keep `CONFLICT`), never retried by the server. The same provider lock
 serializes two requests racing for one slot. Lock order: booking from a session locks the
 session row, then the provider (before its first plain read), then inserts;
 `changeRequestedStart` locks the provider, then updates the request row (the order of

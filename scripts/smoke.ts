@@ -969,6 +969,10 @@ async function overlapChecks(): Promise<void> {
       post(token, `/requests/${id}/quote/accept`)
     );
   };
+  // Refused booking or move: TIME_OVERLAP. Refused accept: still CONFLICT.
+  const overlap: Array<[string, unknown]> = [
+    ["error.code", ERROR_CODE.TIME_OVERLAP],
+  ];
   const conflict: Array<[string, unknown]> = [["error.code", "CONFLICT"]];
 
   // 1. The same time twice.
@@ -978,7 +982,7 @@ async function overlapChecks(): Promise<void> {
     "refused: the exact same time again",
     409,
     () => book(alice, day, "10:00"),
-    conflict
+    overlap
   );
 
   // 2. Partial overlap at either end.
@@ -988,13 +992,13 @@ async function overlapChecks(): Promise<void> {
     "refused: starts inside the existing one",
     409,
     () => book(alice, day, "10:30"),
-    conflict
+    overlap
   );
   await step(
     "refused: ends inside the existing one",
     409,
     () => book(alice, day, "09:30"),
-    conflict
+    overlap
   );
 
   // 3. Fully contained, and fully containing.
@@ -1004,14 +1008,14 @@ async function overlapChecks(): Promise<void> {
     "refused: contained in the existing one",
     409,
     () => book(alice, day, "10:30", 30),
-    conflict
+    overlap
   );
   await booked(alice, day, "14:00", 30);
   await step(
     "refused: contains the existing one",
     409,
     () => book(alice, day, "13:00", 180),
-    conflict
+    overlap
   );
 
   // 4. Back to back is fine.
@@ -1034,7 +1038,7 @@ async function overlapChecks(): Promise<void> {
     "refused: another customer, over an open visit",
     409,
     () => book(bob, day, "10:30"),
-    conflict
+    overlap
   );
   await step("cancel the scheduled request", 200, () =>
     post(alice, `/requests/${scheduled}/cancel`)
@@ -1050,7 +1054,7 @@ async function overlapChecks(): Promise<void> {
     "refused: move onto an open visit",
     409,
     () => moveTo(bob, mine, day, "10:30"),
-    conflict
+    overlap
   );
   await step("move to free time", 200, () => moveTo(bob, mine, day, "13:00"), [
     ["request.requestedStart", `${day}T13:00:00.000`],
@@ -1063,7 +1067,7 @@ async function overlapChecks(): Promise<void> {
     "refused: move onto own pending request",
     409,
     () => moveTo(bob, second, day, "14:00"),
-    conflict
+    overlap
   );
   await step("move clear of it", 200, () => moveTo(bob, second, day, "15:00"));
   // A visit reschedule onto another open visit is still refused at accept.

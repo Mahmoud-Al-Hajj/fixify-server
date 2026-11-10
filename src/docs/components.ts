@@ -106,6 +106,11 @@ const SPECIFIC_CODES: Record<
     status: statusOf(ValidationError),
     meaning: "The session needs at least one customer message with text.",
   },
+  [ERROR_CODE.TIME_OVERLAP]: {
+    status: statusOf(ConflictError),
+    meaning:
+      "Creating a request or changing its requested start: the time overlaps an open visit of the provider or your own pending request to them. Accepting a quote onto a taken slot stays CONFLICT.",
+  },
   [ERROR_CODE.ANALYSIS_CAP_REACHED]: {
     status: statusOf(TooManyRequestsError),
     meaning: "The session has used all its analysis attempts.",
