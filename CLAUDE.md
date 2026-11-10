@@ -485,7 +485,7 @@ Two layers, both required:
    `ER_DUP_ENTRY` on that key and maps it to a `ConflictError` telling the customer the
    slot was taken.
 
-Suggested slots (see "Slots are deterministic") are only suggestions; they do not replace
+Suggested slots (see `docs/ai-plan.md` §16.4) are only suggestions; they do not replace
 either layer.
 
 **Creation-time guard.** A pending request reserves nothing, but a customer cannot stack
@@ -543,164 +543,8 @@ a migration that has already been applied — add a new one.
 
 ## AI
 
-The AI module makes **exactly one kind of call: the intake diagnosis**. Do not add
-another, and do not split it into several. Provider matching and appointment slots are
-deterministic code, not AI.
-
-### Intake diagnosis
-
-One call per intake analysis, over the customer's messages and photos, returning one
-structured JSON object: likely fault and confidence, category, service type, estimated
-duration, a short plain-language explanation, urgency, and a suggested parts list. That
-single response feeds the diagnosis the customer sees, the provider matching, the
-defaults on the new request, and the seeded `request_items`.
-
-Rules, all load-bearing:
-
-1. **Never block on it.** Store each customer turn first, then analyse. A session starts
-   at `none`; set `intake_sessions.ai_status` to `pending`, run the call, then set `done`
-   or `failed`. A failed or slow analysis must not stop the customer: they choose a
-   category manually and continue through ordinary search. A request with no intake
-   session, or one whose session has `ai_status = 'failed'`, is a valid request.
-
-   `intake_sessions.ai_status` values:
-   - `none` — not analysed yet (the default). A new session collecting turns.
-   - `pending` — an analysis is running. Only this, never "not started".
-   - `done` — `ai_diagnosis` holds a validated diagnosis.
-   - `failed` — the analysis failed; the customer continues by manual category search.
-
-   Transitions: `none → pending`, `pending → done | failed`, `done | failed → pending`
-   (re-run, retry).
-2. **AI proposes, the human confirms.** The customer confirms or changes the trade and
-   the urgency before booking; the other request values follow the booking table below.
-   The provider can edit every suggested part. Never write an AI output straight to a
-   field as final truth.
-3. **Store the validated diagnosis** in `intake_sessions.ai_diagnosis` as
-   `{ model, promptVersion, completedAt, diagnosis }`, where `diagnosis` is the
-   zod-validated output: unknown keys dropped, values never edited, and `completedAt` is
-   the Beirut wall-clock time the analysis was stored. On failure `ai_diagnosis` is left
-   unchanged (`NULL` on a first attempt, the previous diagnosis after a failed re-run);
-   GET and booking use it only when `ai_status` is `done`. A successful re-run overwrites
-   it. It is an audit record.
-   Never rewrite it when a user edits a derived value — the confirmed values go in their
-   own columns on the request (`category_id`, `service_type`, `is_urgent`,
-   `estimated_duration_minutes`, `description`) and in `request_items`. The original
-   suggestion survives only in the JSON; that is how "what the model proposed vs what the
-   human changed" stays inspectable.
-4. **Save the AI's turn as a message.** The diagnosis shown to the customer is stored as
-   an `intake_messages` row with `sender = 'ai'`, so the conversation history is complete.
-5. **Validate the response before using it.** Parse against a schema; an unknown category
-   or service type, a duration outside the CHECK range, or a malformed parts list is a
-   failed analysis, not something to coerce silently.
-
-### Rules from the AI plan
-
-- **Attempts cap:** at most 3 analyses per session, failures included, counted in
-  `intake_sessions.analysis_attempts` (migration 004).
-- **Freeze:** once a request references a session, the session takes no new messages
-  and no new analyses (409). An analysis already running may still finish. Add-message
-  and booking both lock the session row (`SELECT … FOR UPDATE`) in their transaction.
-- **English only:** every text field the model returns is in English, whatever language
-  the customer writes in.
-- **Photos:** at most 6 per analysis (the newest), sent inline as base64, never through
-  the Files API. Read only from paths stored in `intake_photos`, resolved inside
-  `uploads/intake/`. Photos are compressed on the phone; the server has no image library.
-  Upload rules (`upload.ts`, plus `recordCustomerTurn` for the text-or-photo rule): JPEG
-  or PNG only, checked by the file's bytes; at most 5 MB each; at most 5 per message;
-  each message needs text, a photo, or both.
-- **Timeout and hedge:** 45 s per analysis. No same-model retry: the fallback model
-  (`GEMINI_FALLBACK_MODEL`) starts after 12 s, or at once when the main model fails with
-  anything but a 400; the first valid diagnosis wins, the other call is aborted
-  (`hedged-diagnose.ts`). No fallback configured → no hedge. The hedge does not count as
-  an attempt.
-- **Limits:** 10 analysis starts per customer per hour (429 `ANALYSIS_RATE_LIMITED`); at
-  most 20 photos per session, checked in `recordCustomerTurn` under the session lock.
-- **Startup sweep:** once at startup, before accepting requests:
-  `UPDATE intake_sessions SET ai_status = 'failed' WHERE ai_status = 'pending'`, with no
-  time condition. It assumes one server process runs analyses.
-- **Areas:** `providers.area` and the search `area` parameter are validated against
-  `DISTRICT_NAMES` (`src/constants/districts.ts`): Lebanon's 25 districts plus Beirut,
-  in common local spelling, served to the app by `GET /districts`. `chk_providers_area`
-  (migration 007) holds the same list; a unit test keeps `schema.sql` and the constant
-  in step.
-- **Booking from a session:** allowed from any `ai_status`; the session needs at least one
-  customer message with text. The client never sends service type, duration or
-  description. The server derives them at booking time:
-
-  | Situation                                                        | `service_type`, duration | Visit length (at quote acceptance) | Parts                   |
-  | ---------------------------------------------------------------- | ------------------------ | ---------------------------------- | ----------------------- |
-  | diagnosis `done` and `categoryId` = the diagnosis category       | from the diagnosis       | the duration                       | seeded, `source = 'ai'` |
-  | trade changed, `none` / `pending` / `failed`, or category `null` | `NULL`                   | 60 minutes (`COALESCE`)            | none                    |
-
-  `description` is the customer's messages in order, joined by blank lines, cut to 2,000
-  characters. A diagnosis that finishes after booking is stored on the session only: it
-  never seeds parts or changes the request. Late means the REQUEST_CREATED payload's
-  `aiStatusAtBooking` is `pending` and the session's `ai_status` is now `done`; there is
-  no column for it.
-
-  The `POST /requests` body is a union of two strict shapes: search (`description`,
-  `serviceType`, `estimatedDurationMinutes`) or session (`intakeSessionId`). Sending any
-  of those three with `intakeSessionId` matches neither shape → 400. Booking locks the
-  session row, then the provider (see "Double-booking", creation-time guard); the visit
-  is still created at quote acceptance. Visit length at
-  quote acceptance = `COALESCE(estimated_duration_minutes, 60)` (`DEFAULT_VISIT_MINUTES`);
-  `estimated_duration_minutes` stays `NULL` when not estimated. `deriveBookingFields` and
-  `buildDescription` are pure functions. An intake booking's `REQUEST_CREATED` payload is
-  `{ source, intakeSessionId, aiStatusAtBooking, usedDiagnosis, partsSeeded }`; a search
-  booking's stays `null`.
-
-### Provider matching is not an AI call
-
-The diagnosis supplies the inputs; ranking is a deterministic SQL query: providers who
-offer the diagnosed category in the customer's area and have `is_accepting = 1`, in the
-order `sort` asks for (`libraries/provider-ranking.ts`): `rating` (the default: rating,
-then earliest slot long enough for the estimated duration), `price` (the trade's base
-rate, unset last, then rating), or `availability` (earliest slot, fully booked last, then
-rating). The base rate (`provider_categories.base_rate`) is a per-trade "from" price for
-display, set with `PUT /providers/me/categories`; it is never a quote. Do not send the
-provider list to the model or ask it to rank or choose providers.
-
-### Slots are deterministic
-
-`GET /providers/:id/slots?durationMinutes=` suggests appointment starts computed in
-`libraries/slot-rules.ts` (`proposeSlots`), with no AI: the provider's weekly hours minus
-open visits, on a 30-minute grid, at least 2 hours after `beirutNow()`, over 7 days, at
-most 3 per day and 10 in total, earliest first. Provider matching's `earliestSlot` is the
-first of these, so search and the slot list always agree. Providers never list slots
-manually. Slots are suggestions only; booking is protected by the double-booking rules.
-
-### The call
-
-The API key comes from the typed config module like any other secret. Never log prompts,
-customer text or photos. Model output is logged only when an analysis fails, at `debug`
-level, cut to 2 KB. Do not repeat a billed call for the same input: re-opening an intake
-session shows the stored result instead of calling the model again. Model output is
-untrusted input — it goes through the same validation as a request body.
-
-The provider is the Google Gemini API (free tier). Free-tier data may be used by Google,
-so only test photos go through it — never real customer photos.
-
-- The Interactions API, always with `store: false`.
-- SDK `@google/genai`, pinned to an exact version, imported only in
-  `src/libraries/ai/gemini.ts`.
-- `GEMINI_MODEL` and `GEMINI_API_KEY` come from the server's environment, never the app.
-  AI is enabled only when both are set; see "Security" for when either is missing.
-  `GEMINI_FALLBACK_MODEL` is optional: the hedge target (see "Timeout and hedge").
-- The response schema is a hand-written JSON Schema (`DIAGNOSIS_JSON_SCHEMA`), never
-  generated from zod. A unit test keeps it in agreement with `diagnosisSchema`.
-- `gemini.ts` throws errors carrying a `kind` (`rate_limited | provider_error |
-  bad_request | blocked | invalid_output`); the caller adds `timeout` and `crashed`.
-
-### Testing the diagnosis with real photos
-
-- Live Gemini calls run only in `scripts/replay-diagnosis.ts` (`npm run replay`), never
-  in `npm test` or CI. The one exception is `npm run smoke -- --live-ai`
-  (`scripts/smoke.ts`, one analysis of a committed test photo), run only when the user
-  asks for it; the default smoke run has AI off.
-- The replay goes through the production path from `buildContent` onward:
-  `buildContent` → `diagnose()` → `JSON.parse` → zod. Only the DB and HTTP are skipped.
-- `fixtures/diagnosis/runs/` is gitignored and may hold raw model output. It is fixture
-  data, not customer data, so the logging rule above does not apply there.
+Exactly one AI call (the Gemini intake diagnosis); provider matching and slots are deterministic code.
+All AI, matching and slot rules live in `docs/ai-plan.md` (§16 plus the sections it cites); read it before touching any of them.
 
 ---
 
@@ -810,24 +654,6 @@ slot generation and `fitsWorkingHours` (`libraries/slot-rules.ts`), the search o
 (`sortMatches`, `libraries/provider-ranking.ts`) and the booking-from-session derivations
 (`deriveBookingFields`, `buildDescription`). Other test suites are added on request, not
 by default.
-
----
-
-## Reconciling code written before the scope change
-
-The scope changed after some code was written. Code that predates it may assume the old
-model. When a task touches any of the areas below, check for these and raise what you find
-in Phase 1 — do not silently fix it as a side effect of another task:
-
-- Reads or writes of `requests.ai_status` or `requests.ai_analysis` (both removed; use
-  `intake_sessions` via `intake_session_id`).
-- A create-request flow that creates the request first and runs the AI afterwards (the
-  diagnosis now happens on the intake session, before the request exists).
-- Customer-uploaded photos stored in `request_photos` (they belong in `intake_photos`).
-- A provider-ranking or slot step that calls the model (both are deterministic code).
-- Code that treats a suggested slot as reserved (only an accepted quote's visit is).
-- Constants missing values the CHECK constraints now require (`intake_messages.sender`,
-  `request_items.source`, `intake_sessions.ai_status`).
 
 ---
 
