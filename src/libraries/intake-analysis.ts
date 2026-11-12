@@ -26,10 +26,23 @@ import {
 import { INTAKE_PHOTO_DIR, loadOwnSession } from "./intake";
 import { UPLOADS_DIR } from "./photo-files";
 import { diagnose, type DiagnosisInput } from "./ai/gemini";
-import { hedgedDiagnose, HedgeFailedError } from "./ai/hedged-diagnose";
+import {
+  hedgedDiagnose,
+  HedgeFailedError,
+  type AttemptName,
+} from "./ai/hedged-diagnose";
 import { PROMPT_VERSION } from "./ai/diagnosis-prompt";
 import type { StoredDiagnosis } from "./ai/diagnosis-schema";
-import { CALLER_FAILURE, DiagnosisError } from "./ai/diagnosis-failure";
+import {
+  CALLER_FAILURE,
+  DiagnosisError,
+  type TokenUsage,
+} from "./ai/diagnosis-failure";
+import {
+  diagnosisCache,
+  diagnosisCacheKey,
+  type CachedDiagnosis,
+} from "./ai/diagnosis-cache";
 
 // The intake diagnosis (docs/ai-plan.md §2.4, §12): started by the customer,
 // run in the background, settled as done or failed on the session row.
@@ -123,12 +136,9 @@ async function runAnalysis(
   const base = { sessionId, attempt, promptVersion: PROMPT_VERSION };
   try {
     const input = await loadAnalysisInput(sessionId);
-    const fallbackModel = gemini.fallbackModel;
-    const { result, winner, hedged } = await hedgedDiagnose(
-      (signal) => diagnose(input, {}, signal),
-      fallbackModel === null
-        ? null
-        : (signal) => diagnose(input, { model: fallbackModel }, signal)
+    const { result, cached, winner, hedged, usage } = await diagnoseOrReuse(
+      input,
+      gemini
     );
     const stored: StoredDiagnosis = {
       model: result.model,
@@ -149,6 +159,7 @@ async function runAnalysis(
       ...base,
       model: result.model,
       durationMs: Date.now() - startedAt,
+      cached,
       hedged,
       winner,
     };
@@ -163,7 +174,7 @@ async function runAnalysis(
       ...outcome,
       category: result.diagnosis.category,
       confidence: result.diagnosis.confidence,
-      usage: result.usage,
+      usage,
     });
   } catch (err) {
     await markAnalysisFailed(sessionId);
@@ -173,6 +184,40 @@ async function runAnalysis(
       err
     );
   }
+}
+
+// A cache hit skips the model call (no tokens used); otherwise the hedged
+// call runs and only its valid diagnosis is cached.
+async function diagnoseOrReuse(
+  input: DiagnosisInput,
+  gemini: GeminiConfig
+): Promise<{
+  result: CachedDiagnosis;
+  cached: boolean;
+  winner: AttemptName | null;
+  hedged: boolean;
+  usage: TokenUsage | null;
+}> {
+  const key = diagnosisCacheKey(gemini.model, input);
+  const hit = diagnosisCache.get(key);
+  if (hit) {
+    return {
+      result: hit,
+      cached: true,
+      winner: null,
+      hedged: false,
+      usage: null,
+    };
+  }
+  const fallbackModel = gemini.fallbackModel;
+  const { result, winner, hedged } = await hedgedDiagnose(
+    (signal) => diagnose(input, {}, signal),
+    fallbackModel === null
+      ? null
+      : (signal) => diagnose(input, { model: fallbackModel }, signal)
+  );
+  diagnosisCache.set(key, { model: result.model, diagnosis: result.diagnosis });
+  return { result, cached: false, winner, hedged, usage: result.usage };
 }
 
 // The messages in order and the newest photos, read from the paths stored in

@@ -642,7 +642,8 @@ Every line written ships as-is.
 - No temporary endpoints, debug routes, or hardcoded credentials.
 - No mock data returned from a real handler. If data is unavailable, say so and ask.
 - Do not add infrastructure that was not asked for: no analytics, no APM, no caching
-  layer, no message queue. Production quality means the code is finished, not that it has
+  layer, no message queue. The one approved cache is the in-memory diagnosis cache
+  (`docs/ai-plan.md` §12.5a). Production quality means the code is finished, not that it has
   more machinery.
 
 Seed scripts are the one exception, and only under `scripts/`, never reachable from a
