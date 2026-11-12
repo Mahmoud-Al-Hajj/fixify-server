@@ -41,6 +41,7 @@ import {
 import {
   diagnosisCache,
   diagnosisCacheKey,
+  inFlightDiagnoses,
   type CachedDiagnosis,
 } from "./ai/diagnosis-cache";
 
@@ -136,10 +137,8 @@ async function runAnalysis(
   const base = { sessionId, attempt, promptVersion: PROMPT_VERSION };
   try {
     const input = await loadAnalysisInput(sessionId);
-    const { result, cached, winner, hedged, usage } = await diagnoseOrReuse(
-      input,
-      gemini
-    );
+    const { result, cached, shared, winner, hedged, usage } =
+      await diagnoseOrReuse(input, gemini);
     const stored: StoredDiagnosis = {
       model: result.model,
       promptVersion: PROMPT_VERSION,
@@ -160,6 +159,7 @@ async function runAnalysis(
       model: result.model,
       durationMs: Date.now() - startedAt,
       cached,
+      shared,
       hedged,
       winner,
     };
@@ -175,6 +175,7 @@ async function runAnalysis(
       category: result.diagnosis.category,
       confidence: result.diagnosis.confidence,
       usage,
+      cacheStats: diagnosisCache.stats(),
     });
   } catch (err) {
     await markAnalysisFailed(sessionId);
@@ -186,14 +187,16 @@ async function runAnalysis(
   }
 }
 
-// A cache hit skips the model call (no tokens used); otherwise the hedged
-// call runs and only its valid diagnosis is cached.
+// A cache hit skips the model call (no tokens used). On a miss, a call already
+// running for the same input is shared; otherwise the hedged call runs. Only
+// the caller that started it caches the result and reports its tokens.
 async function diagnoseOrReuse(
   input: DiagnosisInput,
   gemini: GeminiConfig
 ): Promise<{
   result: CachedDiagnosis;
   cached: boolean;
+  shared: boolean;
   winner: AttemptName | null;
   hedged: boolean;
   usage: TokenUsage | null;
@@ -204,20 +207,36 @@ async function diagnoseOrReuse(
     return {
       result: hit,
       cached: true,
+      shared: false,
       winner: null,
       hedged: false,
       usage: null,
     };
   }
   const fallbackModel = gemini.fallbackModel;
-  const { result, winner, hedged } = await hedgedDiagnose(
-    (signal) => diagnose(input, {}, signal),
-    fallbackModel === null
-      ? null
-      : (signal) => diagnose(input, { model: fallbackModel }, signal)
+  const { promise, shared } = inFlightDiagnoses.run(key, () =>
+    hedgedDiagnose(
+      (signal) => diagnose(input, {}, signal),
+      fallbackModel === null
+        ? null
+        : (signal) => diagnose(input, { model: fallbackModel }, signal)
+    )
   );
-  diagnosisCache.set(key, { model: result.model, diagnosis: result.diagnosis });
-  return { result, cached: false, winner, hedged, usage: result.usage };
+  const { result, winner, hedged } = await promise;
+  if (!shared) {
+    diagnosisCache.set(key, {
+      model: result.model,
+      diagnosis: result.diagnosis,
+    });
+  }
+  return {
+    result,
+    cached: false,
+    shared,
+    winner,
+    hedged,
+    usage: shared ? null : result.usage,
+  };
 }
 
 // The messages in order and the newest photos, read from the paths stored in

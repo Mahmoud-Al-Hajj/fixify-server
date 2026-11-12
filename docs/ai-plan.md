@@ -529,7 +529,7 @@ Every failure ends in `failed` and the same customer screen (the manual trade pa
 ### 12.4 Logging
 
 - Never log prompts, customer text or photos.
-- Success (`info`): sessionId, model, promptVersion, durationMs, attempt number, `cached`, category, confidence, token counts if available (`usage: null` on a cache hit).
+- Success (`info`): sessionId, model, promptVersion, durationMs, attempt number, `cached`, `shared`, category, confidence, token counts if available (`usage: null` on a cache hit or a shared call), `cacheStats` (hits, misses, hit rate since start-up).
 - Failure (`warn`): sessionId, model, promptVersion, durationMs, `kind`, HTTP status if any, zod issue paths if invalid.
 - Failure (`debug`): the raw model output, first 2 KB. Production runs at `info`, so it's only written in development.
 - `kind` = `timeout | rate_limited | provider_error | bad_request | blocked | invalid_output | crashed`, for logs only. No column.
@@ -540,7 +540,7 @@ Every failure ends in `failed` and the same customer screen (the manual trade pa
 
 ### 12.5a Response cache
 
-`libraries/ai/diagnosis-cache.ts`. Before the model call, `runAnalysis` looks up a SHA-256 of `[PROMPT_VERSION, GEMINI_MODEL, buildContent(messages, photos)]`. `buildContent` holds no session or message ids, so the same text and photo bytes from any session share a key. A hit stores the cached diagnosis exactly as a fresh one (same transaction, same AI message) and skips Gemini. Only a valid diagnosis is cached; failures never are. In memory, 24 h TTL, 500 entries, oldest evicted first; a restart empties it. A hit still counts against the 3-attempt cap and the hourly limit (the cache is checked after both). `ai_diagnosis.model` is the model that produced the cached answer.
+`libraries/ai/diagnosis-cache.ts`. Before the model call, `runAnalysis` looks up a SHA-256 of `[PROMPT_VERSION, GEMINI_MODEL, buildContent(messages, photos)]`. `buildContent` holds no session or message ids, so the same text and photo bytes from any session share a key. A hit stores the cached diagnosis exactly as a fresh one (same transaction, same AI message) and skips Gemini. Only a valid diagnosis is cached; failures never are. In memory, 24 h TTL, 500 entries, oldest evicted first; a restart empties it. A hit still counts against the 3-attempt cap and the hourly limit (the cache is checked after both). `ai_diagnosis.model` is the model that produced the cached answer. A miss whose key already has a call running shares that call (`inFlightDiagnoses`) instead of starting another; only the caller that started it caches the result and logs its tokens (`shared: true`, `usage: null` for the others). If the shared call fails, every waiting session fails. The cache counts hits and misses since start-up (`cacheStats` in the success log).
 
 ### 12.6 How it fits together
 
