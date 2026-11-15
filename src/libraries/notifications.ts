@@ -1,5 +1,10 @@
-import { listFeedForUser, countUnreadForUser } from "../models-db/job-events";
+import {
+  listFeedForUser,
+  countUnreadForUser,
+  markEventReadForUser,
+} from "../models-db/job-events";
 import { markNotificationsReadUpTo } from "../models-db/users";
+import { NotFoundError } from "../constants/errors";
 import { toEventEntry, type EventEntry } from "./event-entries";
 
 // The newest page only; a cursor can be added later without changing the
@@ -13,9 +18,10 @@ export interface Notification extends EventEntry {
   unread: boolean;
 }
 
-// The feed is derived from job_events and users.notifications_read_at; there
-// is no notifications table (CLAUDE.md). Each item is the other party's
-// action on one of the user's requests, in the public event shape.
+// The feed is derived from job_events; unread from users.notifications_read_at
+// and notification_reads. There is no notifications table (CLAUDE.md). Each
+// item is the other party's action on one of the user's requests, in the
+// public event shape.
 export async function getFeed(
   userId: string
 ): Promise<{ unreadCount: number; notifications: Notification[] }> {
@@ -45,5 +51,18 @@ export async function markRead(
   readUpTo: Date
 ): Promise<number> {
   await markNotificationsReadUpTo(userId, readUpTo);
+  return countUnreadForUser(userId);
+}
+
+// Marks one notification read; the others keep their state. Not in the
+// user's feed (someone else's request, the user's own action, or no such
+// event) is a 404.
+export async function markOneRead(
+  userId: string,
+  eventId: string
+): Promise<number> {
+  if (!(await markEventReadForUser(userId, eventId))) {
+    throw new NotFoundError("Notification not found");
+  }
   return countUnreadForUser(userId);
 }

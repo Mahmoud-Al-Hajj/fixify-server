@@ -20,6 +20,7 @@ import {
   findProviderAcceptance,
   providerAcceptsCategory,
   listAvailability,
+  lockProviderForUpdate,
 } from "../models-db/providers";
 import {
   findVisitsForRequest,
@@ -49,6 +50,7 @@ import {
   insertRequestItems,
   updateRequestItem,
   deleteRequestItems,
+  setRequestItemOrder,
   type RequestItem,
 } from "../models-db/request-items";
 import { ITEM_SOURCE } from "../constants/item-source";
@@ -84,6 +86,7 @@ import {
 import { buildDescription, deriveBookingFields } from "./booking-from-session";
 import { toEventEntry, type EventEntry } from "./event-entries";
 import { fitsWorkingHours } from "./slot-rules";
+import { assertRequestTimeFree } from "./slot-reservation";
 
 // A request this service just wrote; missing only if deleted concurrently,
 // which no endpoint does.
@@ -138,6 +141,30 @@ async function assertBookable(
   }
 }
 
+// A pending request holds no slot, but its time must not clash with an open
+// visit of the provider or this customer's own pending request to them.
+// Legacy requests with no requestedStart have no time to check.
+async function assertTimeFree(
+  conn: PoolConnection,
+  input: Pick<
+    CreateRequestInput,
+    "customerId" | "providerId" | "requestedStart"
+  > & {
+    estimatedDurationMinutes: number | null;
+  },
+  excludeRequestId: string | null
+): Promise<void> {
+  if (input.requestedStart === null) return;
+  const minutes = input.estimatedDurationMinutes ?? DEFAULT_VISIT_MINUTES;
+  await assertRequestTimeFree(conn, {
+    customerId: input.customerId,
+    providerId: input.providerId,
+    start: input.requestedStart,
+    end: new Date(input.requestedStart.getTime() + minutes * 60_000),
+    excludeRequestId,
+  });
+}
+
 export async function createRequest(
   input: CreateRequestInput
 ): Promise<Request> {
@@ -145,6 +172,7 @@ export async function createRequest(
   const id = randomUUID();
 
   await withTransaction(async (conn) => {
+    await assertTimeFree(conn, input, null);
     await insertRequest(conn, { id, ...input, intakeSessionId: null });
     await insertJobEvent(conn, {
       id: randomUUID(),
@@ -164,6 +192,9 @@ export type BookFromSessionInput = Pick<
   | "providerId"
   | "categoryId"
   | "addressText"
+  | "latitude"
+  | "longitude"
+  | "addressDetails"
   | "requestedStart"
   | "isUrgent"
 > & { intakeSessionId: string };
@@ -186,6 +217,10 @@ export async function createRequestFromSession(
     if (!session || session.customerId !== input.customerId) {
       throw new NotFoundError("Intake session not found");
     }
+    // Before the first plain read (readSessionFreeze), so the overlap checks
+    // below see every booking committed while we waited. Lock order: session,
+    // then provider.
+    await lockProviderForUpdate(conn, input.providerId);
     if ((await readSessionFreeze(conn, input.intakeSessionId)).booked) {
       throw new ConflictError(
         "This problem has already been booked; describe a new one in a new session",
@@ -211,6 +246,7 @@ export async function createRequestFromSession(
       },
       categoryName
     );
+    await assertTimeFree(conn, { ...input, ...derived }, null);
     await insertRequest(conn, {
       ...input,
       id,
@@ -298,15 +334,17 @@ export async function getRequestForActor(
   };
 }
 
-// GET /requests/:id: the details plus the reason for a revised quote that
-// waits for the customer. There is no column for it; while a revision is
-// open, the latest QUOTE_PROPOSED event is that revision.
+// GET /requests/:id: the details plus the parts list and the reason for a
+// revised quote that waits for the customer. There is no column for the
+// reason; while a revision is open, the latest QUOTE_PROPOSED event is that
+// revision. Items are read after the ownership check in getRequestForActor.
 export async function getRequestDetailsForActor(
   requestId: string,
   actorUserId: string
 ): Promise<
   Awaited<ReturnType<typeof getRequestForActor>> & {
     revisionReason: string | null;
+    items: RequestItem[];
   }
 > {
   const details = await getRequestForActor(requestId, actorUserId);
@@ -318,7 +356,8 @@ export async function getRequestDetailsForActor(
   const revisionReason = revisionOpen
     ? await findLatestQuoteReason(request.id)
     : null;
-  return { ...details, revisionReason };
+  const items = await listRequestItems(request.id);
+  return { ...details, revisionReason, items };
 }
 
 // The job's history for either party, oldest first, in its public shape: no
@@ -433,6 +472,7 @@ export async function saveRequestItems(
     const removed = [...current.keys()].filter((id) => !kept.has(id));
     const added: RequestItem[] = [];
     const updated: RequestItem[] = [];
+    const order: string[] = [];
     for (const { id, ...fields } of input) {
       const before = id ? current.get(id) : undefined;
       const item = {
@@ -440,6 +480,7 @@ export async function saveRequestItems(
         id: id ?? randomUUID(),
         source: ITEM_SOURCE.PROVIDER,
       };
+      order.push(item.id);
       if (!before) {
         added.push(item);
       } else if (
@@ -451,12 +492,14 @@ export async function saveRequestItems(
         updated.push(item);
       }
     }
-    if (added.length + updated.length + removed.length === 0) return;
     await deleteRequestItems(conn, removed);
     await insertRequestItems(conn, request.id, added);
     for (const item of updated) {
       await updateRequestItem(conn, item);
     }
+    await setRequestItemOrder(conn, request.id, order);
+    // A save that only reorders changes no part, so it writes no event.
+    if (added.length + updated.length + removed.length === 0) return;
     await insertJobEvent(conn, {
       id: randomUUID(),
       requestId: request.id,
@@ -837,6 +880,18 @@ export async function changeRequestedStart(
   }
 
   await withTransaction(async (conn) => {
+    // Provider lock first, then the request row (the guarded UPDATE): the
+    // same order as quote acceptance.
+    await assertTimeFree(
+      conn,
+      {
+        customerId: request.customerId,
+        providerId: request.providerId,
+        requestedStart: start,
+        estimatedDurationMinutes: request.estimatedDurationMinutes,
+      },
+      request.id
+    );
     const changed = await updateRequestedStart(conn, {
       id: request.id,
       status: REQUEST_STATUS.PENDING,

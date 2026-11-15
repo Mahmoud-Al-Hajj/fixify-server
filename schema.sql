@@ -123,6 +123,9 @@ CREATE TABLE requests (
   service_type   VARCHAR(12),
   description    VARCHAR(2000) NOT NULL,
   address_text   VARCHAR(300)  NOT NULL,
+  latitude       DECIMAL(9,6),                          -- the customer's map pin (directions only)
+  longitude      DECIMAL(9,6),
+  address_details VARCHAR(300),                         -- floor, door, landmark
 
   requested_start            DATETIME(3),
 
@@ -168,6 +171,7 @@ CREATE TABLE request_items (
   unit                  VARCHAR(20),
   estimated_unit_price  DECIMAL(10,2),
   source                VARCHAR(10) NOT NULL DEFAULT 'ai',
+  sort_order            SMALLINT UNSIGNED NOT NULL DEFAULT 0, -- position in the provider's list (migration 010)
   created_at            DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
   updated_at            DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
                                     ON UPDATE CURRENT_TIMESTAMP(3),
@@ -198,7 +202,7 @@ CREATE TABLE visits (
                               ON UPDATE CURRENT_TIMESTAMP(3),
 
   active_slot     DATETIME(3) GENERATED ALWAYS AS (
-                    CASE WHEN status = 'cancelled'
+                    CASE WHEN status IN ('cancelled', 'done')
                          THEN NULL ELSE scheduled_start END) STORED,
 
   PRIMARY KEY (id),
@@ -226,6 +230,21 @@ CREATE TABLE job_events (
   CONSTRAINT fk_events_actor FOREIGN KEY (actor_user_id)
     REFERENCES users(id) ON DELETE SET NULL,
   KEY idx_events_request_time (request_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
+
+
+-- One notification the user opened on its own (migration 009). An event is
+-- unread when it is after users.notifications_read_at AND has no row here.
+CREATE TABLE notification_reads (
+  user_id  CHAR(36) CHARACTER SET ascii NOT NULL,
+  event_id CHAR(36) CHARACTER SET ascii NOT NULL,
+  read_at  DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (user_id, event_id),
+  CONSTRAINT fk_reads_user FOREIGN KEY (user_id)
+    REFERENCES users(id) ON DELETE CASCADE,
+  CONSTRAINT fk_reads_event FOREIGN KEY (event_id)
+    REFERENCES job_events(id) ON DELETE CASCADE,
+  KEY idx_reads_event (event_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;
 
 
@@ -303,7 +322,11 @@ ALTER TABLE requests
     estimated_duration_minutes BETWEEN 15 AND 1440),
   ADD CONSTRAINT chk_req_revision CHECK (
     revised_price IS NULL OR
-    (price_status = 'proposed' AND status = 'in_progress'));
+    (price_status = 'proposed' AND status = 'in_progress')),
+  ADD CONSTRAINT chk_req_pin CHECK (
+    (latitude IS NULL) = (longitude IS NULL) AND
+    (latitude IS NULL OR latitude BETWEEN -90 AND 90) AND
+    (longitude IS NULL OR longitude BETWEEN -180 AND 180));
 
 ALTER TABLE visits
   ADD CONSTRAINT chk_visits_status CHECK (status IN

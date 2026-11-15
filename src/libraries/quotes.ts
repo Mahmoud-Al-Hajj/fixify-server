@@ -24,7 +24,7 @@ import {
 } from "../constants/errors";
 import { assertRequestTransition } from "./request-state-machine";
 import { assertQuoteMove } from "./quote-rules";
-import { reserveSlot } from "./visits";
+import { reserveSlot } from "./slot-reservation";
 import {
   loadRequestForActor,
   rereadRequest,

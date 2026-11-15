@@ -1,9 +1,7 @@
 import { randomUUID } from "node:crypto";
-import type { PoolConnection } from "mysql2/promise";
 import { withTransaction } from "../models-db/pool";
 import {
   findVisitsForRequest,
-  hasOverlappingVisit,
   proposeVisitStart,
   moveVisitToProposedStart,
   clearVisitProposal,
@@ -11,10 +9,7 @@ import {
   insertVisit,
   type Visit,
 } from "../models-db/visits";
-import {
-  lockProviderForUpdate,
-  listAvailability,
-} from "../models-db/providers";
+import { listAvailability } from "../models-db/providers";
 import { insertJobEvent } from "../models-db/job-events";
 import { wallClockToDate, beirutNow } from "../models-db/format-datetime";
 import { lockRequestForUpdate, type Request } from "../models-db/requests";
@@ -23,7 +18,7 @@ import {
   REQUEST_ACTOR_ROLE,
   REQUEST_STATUS,
 } from "../constants/request-status";
-import { OPEN_VISIT_STATUSES, VISIT_STATUS } from "../constants/visit-status";
+import { VISIT_STATUS } from "../constants/visit-status";
 import {
   ConflictError,
   NotFoundError,
@@ -35,43 +30,13 @@ import {
   CHANGED_CONCURRENTLY_MESSAGE,
 } from "./requests";
 import { fitsWorkingHours } from "./slot-rules";
+import { reserveSlot } from "./slot-reservation";
 import {
   assertRescheduleAction,
   assertCanAddFollowUp,
   RESCHEDULE_ACTION,
   type RescheduleAction,
 } from "./visit-rules";
-
-const OVERLAP_MESSAGE =
-  "That time overlaps another booking with this provider. Please choose another time.";
-
-// The double-booking check (CLAUDE.md "Double-booking"). The provider lock is
-// the transaction's first statement, so the overlap read sees every visit a
-// competing booking committed before we got the lock. excludeVisitId: a visit
-// being moved, which must not count as overlapping itself.
-export async function reserveSlot(
-  conn: PoolConnection,
-  input: {
-    providerId: string;
-    start: Date;
-    end: Date;
-    excludeVisitId: string | null;
-  }
-): Promise<void> {
-  await lockProviderForUpdate(conn, input.providerId);
-  if (
-    await hasOverlappingVisit(
-      conn,
-      input.providerId,
-      input.start,
-      input.end,
-      OPEN_VISIT_STATUSES,
-      input.excludeVisitId
-    )
-  ) {
-    throw new ConflictError(OVERLAP_MESSAGE);
-  }
-}
 
 type RequestDetails = Awaited<ReturnType<typeof getRequestForActor>>;
 

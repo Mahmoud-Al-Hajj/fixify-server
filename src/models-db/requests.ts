@@ -7,9 +7,11 @@ import { pool, isDbError } from "./pool";
 import { formatMysqlDateTime } from "./format-datetime";
 import {
   REQUEST_ACTOR_ROLE,
+  REQUEST_STATUS,
   type RequestActorRole,
   type RequestStatus,
 } from "../constants/request-status";
+import { DEFAULT_VISIT_MINUTES } from "../constants/booking";
 import { ConflictError, ERROR_CODE } from "../constants/errors";
 import type { ServiceType } from "../constants/service-type";
 import { PRICE_STATUS, type PriceStatus } from "../constants/price-status";
@@ -27,6 +29,12 @@ export interface Request {
   serviceType: ServiceType | null;
   description: string;
   addressText: string;
+  // The customer's map pin, both or neither. DECIMAL(9,6) read as a number:
+  // unlike money it is never computed with, and six decimals round-trip
+  // exactly through a double.
+  latitude: number | null;
+  longitude: number | null;
+  addressDetails: string | null;
   requestedStart: string | null;
   estimatedDurationMinutes: number | null;
   isUrgent: boolean;
@@ -54,6 +62,9 @@ interface RequestRow extends RowDataPacket {
   service_type: string | null;
   description: string;
   address_text: string;
+  latitude: string | null;
+  longitude: string | null;
+  address_details: string | null;
   requested_start: string | null;
   estimated_duration_minutes: number | null;
   is_urgent: number;
@@ -72,8 +83,8 @@ const REQUEST_COLUMNS = `
   id, customer_id, provider_id,
   (SELECT phone FROM users WHERE users.id = requests.provider_id) AS provider_phone,
   category_id, intake_session_id,
-  service_type, description, address_text, requested_start,
-  estimated_duration_minutes, is_urgent, status, price, revised_price, price_status,
+  service_type, description, address_text, latitude, longitude, address_details,
+  requested_start, estimated_duration_minutes, is_urgent, status, price, revised_price, price_status,
   paid_at, created_at, responded_at, completed_at
 `;
 
@@ -88,6 +99,9 @@ function mapRow(row: RequestRow): Request {
     serviceType: row.service_type as ServiceType | null,
     description: row.description,
     addressText: row.address_text,
+    latitude: row.latitude === null ? null : Number(row.latitude),
+    longitude: row.longitude === null ? null : Number(row.longitude),
+    addressDetails: row.address_details,
     requestedStart: formatMysqlDateTime(row.requested_start),
     estimatedDurationMinutes: row.estimated_duration_minutes,
     isUrgent: Boolean(row.is_urgent),
@@ -143,6 +157,9 @@ export interface InsertRequestInput {
   serviceType: ServiceType | null;
   description: string;
   addressText: string;
+  latitude: number | null;
+  longitude: number | null;
+  addressDetails: string | null;
   // requestedStart is written through mysql2's write path, which is
   // unaffected by dateStrings and encodes using the Date's UTC getters
   // (timezone: "Z"). Build it with Date.UTC(...) so the stored digits are
@@ -165,9 +182,9 @@ export async function insertRequest(
     await conn.query(
       `INSERT INTO requests (
          id, customer_id, provider_id, category_id, intake_session_id,
-         service_type, description, address_text, requested_start,
-         estimated_duration_minutes, is_urgent
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         service_type, description, address_text, latitude, longitude,
+         address_details, requested_start, estimated_duration_minutes, is_urgent
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         input.id,
         input.customerId,
@@ -177,6 +194,9 @@ export async function insertRequest(
         input.serviceType,
         input.description,
         input.addressText,
+        input.latitude,
+        input.longitude,
+        input.addressDetails,
         input.requestedStart,
         input.estimatedDurationMinutes,
         input.isUrgent,
@@ -367,6 +387,39 @@ export async function updateRequestedStart(
     [input.requestedStart, input.id, input.status, input.fromRequestedStart]
   );
   return result.affectedRows === 1;
+}
+
+// Whether this customer already has a pending request to this provider whose
+// [requested_start, requested_start + duration) overlaps [start, end), other
+// than excludeRequestId (the request being moved). A request nobody estimated
+// counts DEFAULT_VISIT_MINUTES, as its visit would. Run it after
+// lockProviderForUpdate. Served by idx_req_customer_status.
+export async function hasOverlappingPendingRequest(
+  conn: PoolConnection,
+  customerId: string,
+  providerId: string,
+  start: Date,
+  end: Date,
+  excludeRequestId: string | null
+): Promise<boolean> {
+  const [rows] = await conn.query<RowDataPacket[]>(
+    `SELECT 1 FROM requests
+     WHERE customer_id = ? AND status = ? AND provider_id = ?
+       AND requested_start < ?
+       AND DATE_ADD(requested_start, INTERVAL COALESCE(estimated_duration_minutes, ?) MINUTE) > ?
+       AND NOT (id <=> ?)
+     LIMIT 1`,
+    [
+      customerId,
+      REQUEST_STATUS.PENDING,
+      providerId,
+      end,
+      DEFAULT_VISIT_MINUTES,
+      start,
+      excludeRequestId,
+    ]
+  );
+  return rows.length > 0;
 }
 
 export async function findRequestById(id: string): Promise<Request | null> {

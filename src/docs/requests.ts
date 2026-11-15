@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { AI_STATUS } from "../constants/ai-status";
-import { DEFAULT_VISIT_MINUTES } from "../constants/booking";
+import { DEFAULT_VISIT_MINUTES, PIN_BOUNDS } from "../constants/booking";
 import { CATEGORY_NAMES, type CategoryName } from "../constants/categories";
 import { ITEM_SOURCE } from "../constants/item-source";
 import { PHOTO_KIND } from "../constants/photo-kind";
@@ -81,6 +81,21 @@ const request = z
     serviceType: z.enum(SERVICE_TYPE).nullable(),
     description: z.string(),
     addressText: z.string(),
+    latitude: documented(z.number().nullable(), {
+      description:
+        "The customer's map pin, for directions. null for a request booked without one; null exactly when longitude is null.",
+      examples: [33.8966],
+    }),
+    longitude: documented(z.number().nullable(), {
+      description:
+        "The map pin's longitude; null exactly when latitude is null.",
+      examples: [35.4823],
+    }),
+    addressDetails: documented(z.string().nullable(), {
+      description:
+        "Floor, door or landmark the customer added; null when blank.",
+      examples: ["3rd floor, blue door"],
+    }),
     requestedStart: documented(wallClock.nullable(), {
       description:
         "The start the customer chose. Once a quote is accepted, the visits hold the real times.",
@@ -185,30 +200,6 @@ sameShape<
   }
 >(true);
 
-// controllers/requests.ts getRequestHandler: RequestDetails plus the reason
-// for an open revised quote. Only GET /requests/:id serves it.
-const requestDetailsWithReason = z
-  .object({
-    request: requestDetails.shape.request.extend({
-      revisionReason: documented(z.string().nullable(), {
-        description:
-          "Why the provider revised the quote, while the revision waits for the customer (job in_progress, priceStatus proposed, revisedPrice set). null otherwise, including after it is accepted or declined.",
-        examples: ["The valve is corroded and has to be replaced too."],
-      }),
-    }),
-  })
-  .register(docsRegistry, { id: "RequestDetailsWithReason" });
-sameShape<
-  z.output<typeof requestDetailsWithReason>,
-  {
-    request: NamedRequestAsServed & {
-      visits: VisitView[];
-      hasReview: boolean;
-      revisionReason: string | null;
-    };
-  }
->(true);
-
 // models-db/request-items.ts RequestItem.
 const requestItem = z
   .object({
@@ -224,6 +215,36 @@ const requestItem = z
   })
   .register(docsRegistry, { id: "RequestItem" });
 sameShape<z.output<typeof requestItem>, RequestItem>(true);
+
+// controllers/requests.ts getRequestHandler: RequestDetails plus the parts
+// list and the reason for an open revised quote. Only GET /requests/:id
+// serves it.
+const requestDetailsWithReason = z
+  .object({
+    request: requestDetails.shape.request.extend({
+      items: documented(z.array(requestItem), {
+        description:
+          "The job's parts list, same shape and order as issueCard.items. Empty when there are no parts.",
+      }),
+      revisionReason: documented(z.string().nullable(), {
+        description:
+          "Why the provider revised the quote, while the revision waits for the customer (job in_progress, priceStatus proposed, revisedPrice set). null otherwise, including after it is accepted or declined.",
+        examples: ["The valve is corroded and has to be replaced too."],
+      }),
+    }),
+  })
+  .register(docsRegistry, { id: "RequestDetailsWithReason" });
+sameShape<
+  z.output<typeof requestDetailsWithReason>,
+  {
+    request: NamedRequestAsServed & {
+      visits: VisitView[];
+      hasReview: boolean;
+      revisionReason: string | null;
+      items: RequestItem[];
+    };
+  }
+>(true);
 
 // models-db/reviews.ts Review.
 const review = z
@@ -348,7 +369,10 @@ function rescheduleAnswer(
 const BOOKING = {
   providerId: TONY.id,
   categoryId: 2,
-  addressText: "Hamra, Bliss Street, building 12, 3rd floor",
+  addressText: "Hamra, Bliss Street, building 12",
+  latitude: 33.8966,
+  longitude: 35.4823,
+  addressDetails: "3rd floor, blue door",
   requestedStart: demoStart(0),
 };
 
@@ -360,7 +384,7 @@ export const requestsPaths: Paths = {
       summary: "Book a provider",
       description: whoCanCall(
         "any signed-in user, as the customer (not with themselves)",
-        "Two shapes. From search: send description, estimatedDurationMinutes and optionally serviceType. From an intake session: send intakeSessionId and none of those three; the server takes them from the session and its diagnosis. requestedStart must be in the future: pick one from GET /providers/{id}/slots. The request starts pending; nothing is reserved until the customer accepts a quote. A provider who is not accepting jobs is a 409; a session already booked is a 409."
+        `Two shapes. From search: send description, estimatedDurationMinutes and optionally serviceType. From an intake session: send intakeSessionId and none of those three; the server takes them from the session and its diagnosis. latitude and longitude (the map pin, inside Lebanon's box: latitude ${PIN_BOUNDS.south}–${PIN_BOUNDS.north}, longitude ${PIN_BOUNDS.west}–${PIN_BOUNDS.east}, at most 6 decimals) are optional but sent together; a blank addressDetails is stored as null. requestedStart must be in the future: pick one from GET /providers/{id}/slots. The request starts pending; nothing is reserved until the customer accepts a quote. A provider who is not accepting jobs is a 409; a session already booked is a 409.`
       ),
       requestBody: jsonBody(createRequestSchema, {
         shownAs: {
@@ -428,8 +452,11 @@ export const requestsPaths: Paths = {
     get: {
       ...ON_REQUEST,
       operationId: "getRequest",
-      summary: "A request with its visits",
-      description: whoCanCall("the request's customer or provider"),
+      summary: "A request with its visits and parts list",
+      description: whoCanCall(
+        "the request's customer or provider",
+        "Includes the job's parts list (items), the same list the provider sees on the issue card."
+      ),
       parameters: REQUEST_ID,
       responses: {
         200: jsonResponse("The request", requestDetailsWithReason),

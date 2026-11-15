@@ -395,7 +395,7 @@ const raw = interaction.output_text;        // → JSON.parse → diagnosisSchem
 ### 5.4 API key
 
 - `GEMINI_API_KEY` in the server's `.env` only, never in the mobile app. Add it and `GEMINI_MODEL` to `.env.example`.
-- **Missing key:** the server still starts and logs a warning. `POST /analysis` returns **503**, and the client shows the manual trade path. AI is optional, so it must not block booking.
+- **Missing key or model:** AI is enabled only when both `GEMINI_API_KEY` and `GEMINI_MODEL` are set; there is no default model in code. Otherwise the server still starts and logs a warning. `POST /analysis` returns **503**, and the client shows the manual trade path. AI is optional, so it must not block booking.
 
 ### 5.5 Timeout and late results
 
@@ -529,7 +529,7 @@ Every failure ends in `failed` and the same customer screen (the manual trade pa
 ### 12.4 Logging
 
 - Never log prompts, customer text or photos.
-- Success (`info`): sessionId, model, promptVersion, durationMs, attempt number, category, confidence, token counts if available.
+- Success (`info`): sessionId, model, promptVersion, durationMs, attempt number, `cached`, `shared`, category, confidence, token counts if available (`usage: null` on a cache hit or a shared call), `cacheStats` (hits, misses, hit rate since start-up).
 - Failure (`warn`): sessionId, model, promptVersion, durationMs, `kind`, HTTP status if any, zod issue paths if invalid.
 - Failure (`debug`): the raw model output, first 2 KB. Production runs at `info`, so it's only written in development.
 - `kind` = `timeout | rate_limited | provider_error | bad_request | blocked | invalid_output | crashed`, for logs only. No column.
@@ -537,6 +537,10 @@ Every failure ends in `failed` and the same customer screen (the manual trade pa
 ### 12.5 Startup sweep
 
 `UPDATE intake_sessions SET ai_status = 'failed' WHERE ai_status = 'pending'`, once at startup, before accepting requests. No time condition: with **one server process** (write this assumption in CLAUDE.md), nothing else can be running an analysis at startup, and a condition like `updated_at < NOW() - INTERVAL 2 MINUTE` would leave a session stuck in `pending` after a quick restart (`tsx watch` restarts on every save). Running more than one instance would need a heartbeat or a job queue instead. No timer-based sweep: the timeout settles everything in a running process.
+
+### 12.5a Response cache
+
+`libraries/ai/diagnosis-cache.ts`. Before the model call, `runAnalysis` looks up a SHA-256 of `[PROMPT_VERSION, GEMINI_MODEL, buildContent(messages, photos)]`. `buildContent` holds no session or message ids, so the same text and photo bytes from any session share a key. A hit stores the cached diagnosis exactly as a fresh one (same transaction, same AI message) and skips Gemini. Only a valid diagnosis is cached; failures never are. In memory, 24 h TTL, 500 entries, oldest evicted first; a restart empties it. A hit still counts against the 3-attempt cap and the hourly limit (the cache is checked after both). `ai_diagnosis.model` is the model that produced the cached answer. A miss whose key already has a call running shares that call (`inFlightDiagnoses`) instead of starting another; only the caller that started it caches the result and logs its tokens (`shared: true`, `usage: null` for the others). If the shared call fails, every waiting session fails. The cache counts hits and misses since start-up (`cacheStats` in the success log).
 
 ### 12.6 How it fits together
 
@@ -633,7 +637,7 @@ A diagnosis with `category: null` never matches, so it takes the no-diagnosis br
 
 Later, at quote acceptance (existing code): the visit is created with length `COALESCE(estimated_duration_minutes, 60)`. That `COALESCE` is the one change to the accept step.
 
-- **Lock order:** booking locks only the session row. The provider lock and the visit stay at quote acceptance, as today. Add-message and the analysis finish also touch only the session, so nothing deadlocks.
+- **Lock order:** booking locks the session row, then the provider (before its first plain read; CLAUDE.md "Double-booking", creation-time guard), then inserts. The visit is still created at quote acceptance. Add-message and the analysis finish touch only the session, so nothing deadlocks.
 - **Pending at booking:** the analysis finish UPDATE waits for the booking to commit, then writes `done` as a late diagnosis (card only, no parts). Finished before booking: booking uses it.
 - **Edge case:** the customer skipped, saw slots for 60 min, and the diagnosis landed just before Book with the same trade and a longer duration. The request then carries the longer duration, and the slot may not fit it when the quote is accepted → the existing slot 409; the customer changes the requested start (`POST /requests/:id/requested-start`) and accepts again.
 
@@ -817,3 +821,33 @@ Steps over ~100 lines: estimate first and stop for approval, then stop again if 
 5b. Issue card: the session's diagnosis and the late label ("AI suggestion, arrived after booking", §7). Late = `aiStatusAtBooking` `pending` in the REQUEST_CREATED payload and `ai_status` now `done` (§13.4).
 6. Districts list + `providers.area` cleanup.
 7. Client screens.
+
+---
+
+## 16. Standing rules (moved from CLAUDE.md)
+
+The rules below were the "AI" section of CLAUDE.md and are not stated in §0–§15. Everything else from that section is already in those sections (§0, §2, §3, §4, §5, §7, §12, §13, §14), which are the current rules.
+
+### 16.1 The diagnosis is never rewritten (extends §3.3)
+
+When a user edits a derived value, `ai_diagnosis` is not touched. The confirmed values go in their own columns on the request (`category_id`, `service_type`, `is_urgent`, `estimated_duration_minutes`, `description`) and in `request_items`. The original suggestion survives only in the JSON; that is how "what the model proposed vs what the human changed" stays inspectable.
+
+### 16.2 No repeated billed call (extends §2.2)
+
+Do not repeat a billed call for the same input: re-opening an intake session shows the stored result instead of calling the model again.
+
+### 16.3 Provider matching is not an AI call (extends §0)
+
+The diagnosis supplies the inputs; ranking is a deterministic SQL query: providers who offer the diagnosed category in the customer's area and have `is_accepting = 1`, in the order `sort` asks for (`libraries/provider-ranking.ts`): `rating` (the default: rating, then earliest slot long enough for the estimated duration), `price` (the trade's base rate, unset last, then rating), or `availability` (earliest slot, fully booked last, then rating). The base rate (`provider_categories.base_rate`) is a per-trade "from" price for display, set with `PUT /providers/me/categories`; it is never a quote. Do not send the provider list to the model or ask it to rank or choose providers.
+
+### 16.4 Slots are deterministic (extends §0)
+
+`GET /providers/:id/slots?durationMinutes=` suggests appointment starts computed in `libraries/slot-rules.ts` (`proposeSlots`), with no AI: the provider's weekly hours minus open visits, on a 30-minute grid, at least 2 hours after `beirutNow()`, over 7 days, at most 3 per day and 10 in total, earliest first. Provider matching's `earliestSlot` is the first of these, so search and the slot list always agree. Providers never list slots manually. Slots are suggestions only; booking is protected by the double-booking rules (CLAUDE.md "Double-booking").
+
+### 16.5 Districts test (extends §6)
+
+`chk_providers_area` (migration 007) holds the same list as `DISTRICT_NAMES`; a unit test keeps `schema.sql` and the constant in step.
+
+### 16.6 Live AI in the smoke run (extends §14)
+
+The one exception to "live calls only in the replay script" is `npm run smoke -- --live-ai` (`scripts/smoke.ts`, one analysis of a committed test photo), run only when the user asks for it; the default smoke run has AI off.

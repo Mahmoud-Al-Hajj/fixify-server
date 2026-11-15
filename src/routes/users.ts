@@ -19,8 +19,7 @@ usersRouter.patch(
   validateBody(updateCurrentUserSchema),
   updateCurrentUserHandler
 );
-// Rate limited like the auth endpoints: it verifies a password, so a stolen
-// token could otherwise be used to guess it.
+
 usersRouter.post(
   "/me/password",
   authRateLimiter,

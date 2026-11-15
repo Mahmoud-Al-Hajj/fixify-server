@@ -2,6 +2,7 @@
 // from npm test.
 //
 //   npm run smoke                 AI off: analysis must answer 503
+//   npm run smoke -- --overlap-only   only the overlapping-requests section
 //   npm run smoke -- --live-ai    one real diagnosis (1-2 Gemini calls);
 //                                 only when the user asks for it
 //
@@ -14,10 +15,12 @@
 // Sequential; one line per step; stops at the first mismatch.
 
 import { spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { setTimeout as sleep } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { AI_STATUS } from "../src/constants/ai-status";
+import { ITEM_SOURCE } from "../src/constants/item-source";
 import { PRICE_STATUS } from "../src/constants/price-status";
 import {
   REQUEST_ACTOR_ROLE,
@@ -34,7 +37,10 @@ const PASSWORD = "Smoke1234!";
 const AREA = "Beirut";
 
 const { values: args } = parseArgs({
-  options: { "live-ai": { type: "boolean", default: false } },
+  options: {
+    "live-ai": { type: "boolean", default: false },
+    "overlap-only": { type: "boolean", default: false },
+  },
 });
 const liveAi = args["live-ai"];
 
@@ -344,12 +350,18 @@ async function journey(): Promise<void> {
         providerId,
         categoryId,
         addressText: "Hamra, smoke test",
+        latitude: 33.8966,
+        longitude: 35.4823,
+        addressDetails: "  3rd floor  ",
         requestedStart: firstSlot,
         intakeSessionId: sessionId,
       }),
     [
       ["request.status", REQUEST_STATUS.PENDING],
       ["request.requestedStart", firstSlot],
+      ["request.latitude", 33.8966],
+      ["request.longitude", 35.4823],
+      ["request.addressDetails", "3rd floor"],
     ]
   );
   const id = text(booked, "request.id");
@@ -367,8 +379,18 @@ async function journey(): Promise<void> {
     [
       ["issueCard.aiStatus", liveAi ? AI_STATUS.DONE : AI_STATUS.NONE],
       ["issueCard.isLate", false],
+      ["issueCard.request.latitude", 33.8966],
+      ["issueCard.request.longitude", 35.4823],
     ]
   );
+  if (!liveAi) {
+    await step(
+      "request detail (customer): no parts yet, items is []",
+      200,
+      () => api("GET", req(""), customer),
+      [["request.items.length", 0]]
+    );
+  }
   await step("provider edits the parts list", 200, () =>
     api("PUT", req("/items"), provider, {
       items: [
@@ -387,6 +409,64 @@ async function journey(): Promise<void> {
       ],
     })
   );
+  const card = await step("issue card after the edit", 200, () =>
+    api("GET", req("/issue-card"), provider)
+  );
+  for (const [role, token] of [
+    [REQUEST_ACTOR_ROLE.CUSTOMER, customer],
+    [REQUEST_ACTOR_ROLE.PROVIDER, provider],
+  ] as const) {
+    const seen = await step(
+      `request detail (${role}) lists the parts`,
+      200,
+      () => api("GET", req(""), token),
+      [
+        ["request.items.length", 2],
+        ["request.items.0.name", "Sink trap washer"],
+        ["request.items.0.source", ITEM_SOURCE.PROVIDER],
+        ["request.items.1.name", "PTFE tape"],
+      ]
+    );
+    if (
+      JSON.stringify(at(seen, "request.items")) !==
+      JSON.stringify(at(card, "issueCard.items"))
+    ) {
+      throw new SmokeFailure(
+        `the ${role}'s items differ from the issue card's: ${JSON.stringify(at(seen, "request.items"))}`
+      );
+    }
+  }
+  // The provider's order is kept, and a save that only reorders sticks.
+  const saved = list(card, "issueCard.items").map((item) => ({
+    id: text(item, "id"),
+    name: text(item, "name"),
+    quantity: Number(at(item, "quantity")),
+    unit: at(item, "unit"),
+    estimatedUnitPrice: at(item, "estimatedUnitPrice"),
+  }));
+  for (const [label, order, first] of [
+    ["provider reverses the parts (reorder only)", [1, 0], "PTFE tape"],
+    ["provider restores the order", [0, 1], "Sink trap washer"],
+  ] as const) {
+    await step(label, 200, () =>
+      api("PUT", req("/items"), provider, {
+        items: order.map((index) => saved[index]),
+      })
+    );
+    await step(
+      `the parts come back in that order (${first} first)`,
+      200,
+      () => api("GET", req(""), customer),
+      [["request.items.0.name", first]]
+    );
+  }
+  await step("register a user who is not on the request", 201, () =>
+    reg("stranger", {})
+  );
+  const stranger = await login("stranger");
+  await step("refused: a stranger reads the request", 403, () =>
+    api("GET", req(""), stranger)
+  );
 
   // Quote, acceptance, reschedule.
   await step(
@@ -398,6 +478,33 @@ async function journey(): Promise<void> {
   await step("refused: provider accepts the quote", 403, () =>
     api("POST", req("/quote/accept"), provider)
   );
+  // Another customer books the same time while the first job is still pending
+  // (a pending request holds no slot); the first accept below wins.
+  const clash = text(
+    await step(
+      "book another customer's job for the same time (search)",
+      201,
+      () =>
+        api("POST", "/requests", rana, {
+          providerId,
+          categoryId,
+          addressText: "Hamra, smoke test",
+          requestedStart: firstSlot,
+          description: "Dripping bathroom tap",
+          estimatedDurationMinutes: 60,
+        }),
+      [
+        ["request.latitude", null],
+        ["request.longitude", null],
+        ["request.addressDetails", null],
+      ]
+    ),
+    "request.id"
+  );
+  await step("provider quotes the second job", 200, () =>
+    api("POST", `/requests/${clash}/quote`, provider, { price: "40.00" })
+  );
+
   await step(
     "customer accepts the quote",
     200,
@@ -451,26 +558,11 @@ async function journey(): Promise<void> {
     ]
   );
 
-  // The slot is taken: a second job at the same time can be quoted, but its
-  // quote cannot be accepted, and the job stays as it was.
-  const clash = text(
-    await step("book a second job at the same time (search)", 201, () =>
-      api("POST", "/requests", customer, {
-        providerId,
-        categoryId,
-        addressText: "Hamra, smoke test",
-        requestedStart: firstSlot,
-        description: "Dripping bathroom tap",
-        estimatedDurationMinutes: 60,
-      })
-    ),
-    "request.id"
-  );
-  await step("provider quotes the second job", 200, () =>
-    api("POST", `/requests/${clash}/quote`, provider, { price: "40.00" })
-  );
+  // The slot is taken: the other customer's job, booked while it was still
+  // free, was quoted too, but its quote cannot be accepted, and the job stays
+  // as it was.
   const taken = await step("refused: accept while the slot is taken", 409, () =>
-    api("POST", `/requests/${clash}/quote/accept`, customer)
+    api("POST", `/requests/${clash}/quote/accept`, rana)
   );
   if (!text(taken, "error.message").endsWith("Please choose another time.")) {
     throw new SmokeFailure(`not the slot conflict: ${JSON.stringify(taken)}`);
@@ -478,7 +570,7 @@ async function journey(): Promise<void> {
   await step(
     "the second job is unchanged",
     200,
-    () => api("GET", `/requests/${clash}`, customer),
+    () => api("GET", `/requests/${clash}`, rana),
     [
       ["request.status", REQUEST_STATUS.PENDING],
       ["request.priceStatus", PRICE_STATUS.PROPOSED],
@@ -500,13 +592,13 @@ async function journey(): Promise<void> {
   await step(
     "refused: a requested start in the past",
     400,
-    () => moveTo(customer, "2020-01-01T08:00:00.000"),
+    () => moveTo(rana, "2020-01-01T08:00:00.000"),
     [["error.message", "requestedStart must be in the future"]]
   );
   await step(
     "refused: a requested start outside working hours",
     400,
-    () => moveTo(customer, `${firstSlot.slice(0, 10)}T22:00:00.000`),
+    () => moveTo(rana, `${firstSlot.slice(0, 10)}T22:00:00.000`),
     [["error.message", "That time is outside the provider's working hours"]]
   );
   const freeStart = text(
@@ -525,7 +617,7 @@ async function journey(): Promise<void> {
   await step(
     "customer moves the second job to a free time",
     200,
-    () => moveTo(customer, freeStart),
+    () => moveTo(rana, freeStart),
     [
       ["request.requestedStart", freeStart],
       ["request.priceStatus", PRICE_STATUS.PROPOSED],
@@ -535,7 +627,7 @@ async function journey(): Promise<void> {
   await step(
     "the same time again changes nothing",
     200,
-    () => moveTo(customer, freeStart),
+    () => moveTo(rana, freeStart),
     [
       ["request.requestedStart", freeStart],
       ["request.priceStatus", PRICE_STATUS.PROPOSED],
@@ -544,17 +636,17 @@ async function journey(): Promise<void> {
   await step(
     "customer accepts the second job's quote",
     200,
-    () => api("POST", clashReq("/quote/accept"), customer),
+    () => api("POST", clashReq("/quote/accept"), rana),
     [["request.status", REQUEST_STATUS.SCHEDULED]]
   );
   await step(
     "the second job's visit is at the new time",
     200,
-    () => api("GET", clashReq(""), customer),
+    () => api("GET", clashReq(""), rana),
     [["request.visits.0.scheduledStart", freeStart]]
   );
   await step("refused: change the requested start once scheduled", 409, () =>
-    moveTo(customer, firstSlot)
+    moveTo(rana, firstSlot)
   );
   const visit1 = text(list(detail, "request.visits")[0], "id");
   const newStart = text(
@@ -730,6 +822,64 @@ async function journey(): Promise<void> {
       `the feed should show one requested start change: ${JSON.stringify(moves)}`
     );
   }
+
+  // One notification read on its own; the others keep their state.
+  const opened = text(items[0], "id");
+  if (at(items[0], "unread") !== true) {
+    throw new SmokeFailure(
+      `the item to open should be unread: ${JSON.stringify(items[0])}`
+    );
+  }
+  const unreadBefore = Number(at(feed, "unreadCount"));
+  await step(
+    "provider opens one notification",
+    200,
+    () => api("POST", `/notifications/${opened}/read`, provider),
+    [["unreadCount", unreadBefore - 1]]
+  );
+  const after = await step(
+    "provider's notifications after opening one",
+    200,
+    () => api("GET", "/notifications", provider)
+  );
+  const unreadById = new Map(
+    list(feed, "notifications").map((n) => [text(n, "id"), at(n, "unread")])
+  );
+  const changed = list(after, "notifications").filter(
+    (n) =>
+      at(n, "unread") !==
+      (text(n, "id") === opened ? false : unreadById.get(text(n, "id")))
+  );
+  if (changed.length > 0) {
+    throw new SmokeFailure(
+      `only the opened item should turn read: ${JSON.stringify(changed)}`
+    );
+  }
+  await step(
+    "provider opens it again (no-op)",
+    200,
+    () => api("POST", `/notifications/${opened}/read`, provider),
+    [["unreadCount", unreadBefore - 1]]
+  );
+  const own = timeline.find(
+    (e) => at(e, "actor") === REQUEST_ACTOR_ROLE.PROVIDER
+  );
+  if (own === undefined) {
+    throw new SmokeFailure("the timeline should have a provider action");
+  }
+  await step("refused: provider opens their own action", 404, () =>
+    api("POST", `/notifications/${text(own, "id")}/read`, provider)
+  );
+  await step("refused: another customer opens the notification", 404, () =>
+    api("POST", `/notifications/${opened}/read`, rana)
+  );
+  await step("refused: opening an unknown notification", 404, () =>
+    api("POST", `/notifications/${randomUUID()}/read`, provider)
+  );
+  await step("refused: opening a notification by a non-uuid id", 400, () =>
+    api("POST", "/notifications/not-a-uuid/read", provider)
+  );
+
   await step(
     "provider marks notifications read",
     200,
@@ -741,13 +891,292 @@ async function journey(): Promise<void> {
   );
 }
 
+// Overlapping requests (CLAUDE.md "Double-booking"). Fresh accounts and one
+// calendar day per scenario, so nothing here depends on the journey above.
+async function overlapChecks(): Promise<void> {
+  const run = Date.now();
+  const categories = list(
+    await step("overlap: categories", 200, () =>
+      api("GET", "/categories", null)
+    ),
+    "categories"
+  );
+  const categoryId = at(
+    categories.find((c) => at(c, "name") === "Plumber"),
+    "id"
+  );
+  const register = async (who: string, extra: Json) => {
+    const email = `overlap-${run}-${who}@test.fixify`;
+    const registered = await step(`overlap: register ${who}`, 201, () =>
+      api("POST", "/auth/register", null, {
+        fullName: `Overlap ${who}`,
+        email,
+        phone: "+961 3 999 003",
+        password: PASSWORD,
+        ...extra,
+      })
+    );
+    const token = text(
+      await step(`overlap: login ${who}`, 200, () =>
+        api("POST", "/auth/login", null, { email, password: PASSWORD })
+      ),
+      "token"
+    );
+    return { id: text(registered, "user.id"), token };
+  };
+  const provider = await register("provider", {
+    becomeProvider: { categoryIds: [categoryId] },
+  });
+  const alice = (await register("alice", {})).token;
+  const bob = (await register("bob", {})).token;
+  await step("overlap: provider profile", 200, () =>
+    api("PATCH", "/providers/me", provider.token, {
+      bio: "Overlap-test plumber",
+      area: AREA,
+      isAccepting: true,
+    })
+  );
+  await step("overlap: provider working hours (07:00-21:00)", 200, () =>
+    api("PUT", "/providers/me/availability", provider.token, {
+      availability: [0, 1, 2, 3, 4, 5, 6].map((weekday) => ({
+        weekday,
+        startTime: "07:00",
+        endTime: "21:00",
+      })),
+    })
+  );
+
+  // One day per scenario, from 10 days out (a Beirut date is never behind it).
+  let dayNo = 10;
+  const nextDay = () =>
+    new Date(Date.now() + dayNo++ * 86_400_000).toISOString().slice(0, 10);
+  const book = (token: string, day: string, time: string, minutes = 60) =>
+    api("POST", "/requests", token, {
+      providerId: provider.id,
+      categoryId,
+      addressText: "Hamra, overlap test",
+      requestedStart: `${day}T${time}:00.000`,
+      description: "Overlap test job",
+      estimatedDurationMinutes: minutes,
+    });
+  const booked = async (token: string, day: string, time: string, m = 60) =>
+    text(
+      await step(`book ${day} ${time} (${m} min)`, 201, () =>
+        book(token, day, time, m)
+      ),
+      "request.id"
+    );
+  const post = (token: string, path: string, body?: Json) =>
+    api("POST", path, token, body);
+  const moveTo = (token: string, id: string, day: string, time: string) =>
+    post(token, `/requests/${id}/requested-start`, {
+      requestedStart: `${day}T${time}:00.000`,
+    });
+  const quote = (id: string) =>
+    step("provider quotes", 200, () =>
+      post(provider.token, `/requests/${id}/quote`, { price: "25.00" })
+    );
+  const accepted = async (id: string, token: string) => {
+    await quote(id);
+    await step("quote accepted", 200, () =>
+      post(token, `/requests/${id}/quote/accept`)
+    );
+  };
+  // Refused booking or move: TIME_OVERLAP. Refused accept: still CONFLICT.
+  const overlap: Array<[string, unknown]> = [
+    ["error.code", ERROR_CODE.TIME_OVERLAP],
+  ];
+  const conflict: Array<[string, unknown]> = [["error.code", "CONFLICT"]];
+
+  // 1. The same time twice.
+  let day = nextDay();
+  await booked(alice, day, "10:00");
+  await step(
+    "refused: the exact same time again",
+    409,
+    () => book(alice, day, "10:00"),
+    overlap
+  );
+
+  // 2. Partial overlap at either end.
+  day = nextDay();
+  await booked(alice, day, "10:00");
+  await step(
+    "refused: starts inside the existing one",
+    409,
+    () => book(alice, day, "10:30"),
+    overlap
+  );
+  await step(
+    "refused: ends inside the existing one",
+    409,
+    () => book(alice, day, "09:30"),
+    overlap
+  );
+
+  // 3. Fully contained, and fully containing.
+  day = nextDay();
+  await booked(alice, day, "10:00", 120);
+  await step(
+    "refused: contained in the existing one",
+    409,
+    () => book(alice, day, "10:30", 30),
+    overlap
+  );
+  await booked(alice, day, "14:00", 30);
+  await step(
+    "refused: contains the existing one",
+    409,
+    () => book(alice, day, "13:00", 180),
+    overlap
+  );
+
+  // 4. Back to back is fine.
+  day = nextDay();
+  await booked(alice, day, "10:00");
+  await booked(alice, day, "11:00");
+  await booked(alice, day, "09:00");
+
+  // 5. A cancelled booking frees its time: a pending request, then a visit.
+  day = nextDay();
+  const pending = await booked(alice, day, "10:00");
+  await step("cancel the pending request", 200, () =>
+    post(alice, `/requests/${pending}/cancel`)
+  );
+  await booked(alice, day, "10:00");
+  day = nextDay();
+  const scheduled = await booked(alice, day, "10:00");
+  await accepted(scheduled, alice);
+  await step(
+    "refused: another customer, over an open visit",
+    409,
+    () => book(bob, day, "10:30"),
+    overlap
+  );
+  await step("cancel the scheduled request", 200, () =>
+    post(alice, `/requests/${scheduled}/cancel`)
+  );
+  await booked(bob, day, "10:30");
+
+  // 6. Moving a pending request's time, and rescheduling a visit.
+  day = nextDay();
+  const visitJob = await booked(alice, day, "10:00");
+  await accepted(visitJob, alice);
+  const mine = await booked(bob, day, "12:00");
+  await step(
+    "refused: move onto an open visit",
+    409,
+    () => moveTo(bob, mine, day, "10:30"),
+    overlap
+  );
+  await step("move to free time", 200, () => moveTo(bob, mine, day, "13:00"), [
+    ["request.requestedStart", `${day}T13:00:00.000`],
+  ]);
+  await step("move overlapping only its own old time", 200, () =>
+    moveTo(bob, mine, day, "13:30")
+  );
+  const second = await booked(bob, day, "16:00");
+  await step(
+    "refused: move onto own pending request",
+    409,
+    () => moveTo(bob, second, day, "14:00"),
+    overlap
+  );
+  await step("move clear of it", 200, () => moveTo(bob, second, day, "15:00"));
+  // A visit reschedule onto another open visit is still refused at accept.
+  const otherVisit = await booked(bob, day, "18:00");
+  await accepted(otherVisit, bob);
+  const visitId = text(
+    list(
+      await step("visit of the 10:00 job", 200, () =>
+        api("GET", `/requests/${visitJob}`, alice)
+      ),
+      "request.visits"
+    )[0],
+    "id"
+  );
+  const reschedule = `/requests/${visitJob}/visits/${visitId}/reschedule`;
+  await step("propose 18:30", 200, () =>
+    post(alice, reschedule, { start: `${day}T18:30:00.000` })
+  );
+  await step(
+    "refused: accept onto an open visit",
+    409,
+    () => post(provider.token, `${reschedule}/accept`),
+    conflict
+  );
+  await step("provider declines it", 200, () =>
+    post(provider.token, `${reschedule}/decline`)
+  );
+  await step("propose 20:00", 200, () =>
+    post(alice, reschedule, { start: `${day}T20:00:00.000` })
+  );
+  await step("accept onto free time", 200, () =>
+    post(provider.token, `${reschedule}/accept`)
+  );
+
+  // 7. Races over real HTTP.
+  const race = async (
+    label: string,
+    wanted: string,
+    calls: Array<() => Promise<Reply>>
+  ) => {
+    const replies = await Promise.all(calls.map((call) => call()));
+    const statuses = replies.map((reply) => reply.status).sort();
+    await step(
+      label,
+      200,
+      async () => ({ status: 200, body: { statuses: statuses.join(",") } }),
+      [["statuses", wanted]]
+    );
+  };
+  for (let round = 1; round <= 3; round++) {
+    day = nextDay();
+    await race(`race ${round}: same customer, same slot`, "201,409", [
+      () => book(alice, day, "10:00"),
+      () => book(alice, day, "10:00"),
+    ]);
+  }
+  day = nextDay();
+  await race("race: same customer, overlapping slots", "201,409", [
+    () => book(alice, day, "10:00"),
+    () => book(alice, day, "10:30"),
+  ]);
+  // Two customers may both hold a pending request for one time; the first
+  // accept wins, the second gets the slot conflict.
+  day = nextDay();
+  const a = await booked(alice, day, "10:00");
+  const b = await booked(bob, day, "10:00");
+  await quote(a);
+  await quote(b);
+  await step("first accept wins", 200, () =>
+    post(alice, `/requests/${a}/quote/accept`)
+  );
+  await step(
+    "refused: second accept, slot taken",
+    409,
+    () => post(bob, `/requests/${b}/quote/accept`),
+    conflict
+  );
+  day = nextDay();
+  const c = await booked(alice, day, "10:00");
+  const d = await booked(bob, day, "10:30");
+  await quote(c);
+  await quote(d);
+  await race("race: two accepts for overlapping times", "200,409", [
+    () => post(alice, `/requests/${c}/quote/accept`),
+    () => post(bob, `/requests/${d}/quote/accept`),
+  ]);
+}
+
 async function main(): Promise<void> {
   const { server, log } = await startServer();
   try {
     console.log(
       `smoke: ${BASE} on fixify_verify, AI ${liveAi ? "LIVE" : "off"}\n`
     );
-    await journey();
+    if (!args["overlap-only"]) await journey();
+    await overlapChecks();
     console.log(`\nsmoke: all ${stepNo} steps passed`);
   } catch (err) {
     console.log(

@@ -150,10 +150,14 @@ interface FeedEventRow extends JobEventRow {
   unread: number;
 }
 
-// Unread for the user `me`: after notifications_read_at, strictly; everything
-// when it is NULL. The feed's flag and the count use this same expression.
-const UNREAD = `(me.notifications_read_at IS NULL
-  OR e.created_at > me.notifications_read_at)`;
+// Unread for the user `me`: after notifications_read_at (strictly; everything
+// when it is NULL) and not marked read on its own in notification_reads. The
+// feed's flag and the count use this same expression; the NOT EXISTS is
+// served by the notification_reads primary key.
+const UNREAD = `((me.notifications_read_at IS NULL
+    OR e.created_at > me.notifications_read_at)
+  AND NOT EXISTS (SELECT 1 FROM notification_reads nr
+    WHERE nr.user_id = me.id AND nr.event_id = e.id))`;
 
 // Events on the user's requests made by someone else (own actions are not
 // notifications): one branch for requests they booked, one for requests they
@@ -226,4 +230,27 @@ export async function countUnreadForUser(userId: string): Promise<number> {
     [userId, userId]
   );
   return Number(rows[0]?.unread ?? 0);
+}
+
+// Marks one event read for the user, only if it is in their feed: an event on
+// a request they booked or serve, made by someone else. Returns false when it
+// isn't (the caller answers 404). Marking twice is a no-op. Served by the
+// job_events and requests primary keys.
+export async function markEventReadForUser(
+  userId: string,
+  eventId: string
+): Promise<boolean> {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT e.id FROM job_events e
+     JOIN requests r ON r.id = e.request_id
+     WHERE e.id = ? AND (r.customer_id = ? OR r.provider_id = ?)
+       AND NOT (e.actor_user_id <=> ?)`,
+    [eventId, userId, userId, userId]
+  );
+  if (rows.length === 0) return false;
+  await pool.query(
+    `INSERT IGNORE INTO notification_reads (user_id, event_id) VALUES (?, ?)`,
+    [userId, eventId]
+  );
+  return true;
 }
