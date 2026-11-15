@@ -207,8 +207,10 @@ scaffold them, and do not reintroduce them as "while we're here" improvements:
 
 - Payments, wallets, escrow, or any payment processing (price is a record of an
   agreement; settlement is cash, recorded via `paid_at`)
-- Location or geospatial search, lat/lng columns, distance calculations (`providers.area`
-  is a district name from a fixed list, and that is the whole feature)
+- Location or geospatial search or distance calculations (`providers.area` is a district
+  name from a fixed list, and that is the whole feature). The request's map pin
+  (`latitude`/`longitude`, migration 012) is stored and returned for directions only; no
+  query filters, sorts or measures by it
 - Provider verification / document upload
 - Messaging between customer and provider in any form, real-time, or websockets (contact
   is a phone call placed by the client; the intake conversation is customer ↔ AI, stored
@@ -438,6 +440,8 @@ options laid out.
   the code that reads it, or every parts-list read and save fails. 011 keeps `DEFAULT 0`
   (010 drops it) so the previously deployed code, which inserts without the column,
   keeps working in between.
+- Migration 012 (`requests.latitude`, `longitude`, `address_details`) must be applied
+  before deploying the code that reads it, or every request read fails.
 
 
 ### Operations that require a transaction

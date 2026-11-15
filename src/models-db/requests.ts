@@ -29,6 +29,12 @@ export interface Request {
   serviceType: ServiceType | null;
   description: string;
   addressText: string;
+  // The customer's map pin, both or neither. DECIMAL(9,6) read as a number:
+  // unlike money it is never computed with, and six decimals round-trip
+  // exactly through a double.
+  latitude: number | null;
+  longitude: number | null;
+  addressDetails: string | null;
   requestedStart: string | null;
   estimatedDurationMinutes: number | null;
   isUrgent: boolean;
@@ -56,6 +62,9 @@ interface RequestRow extends RowDataPacket {
   service_type: string | null;
   description: string;
   address_text: string;
+  latitude: string | null;
+  longitude: string | null;
+  address_details: string | null;
   requested_start: string | null;
   estimated_duration_minutes: number | null;
   is_urgent: number;
@@ -74,8 +83,8 @@ const REQUEST_COLUMNS = `
   id, customer_id, provider_id,
   (SELECT phone FROM users WHERE users.id = requests.provider_id) AS provider_phone,
   category_id, intake_session_id,
-  service_type, description, address_text, requested_start,
-  estimated_duration_minutes, is_urgent, status, price, revised_price, price_status,
+  service_type, description, address_text, latitude, longitude, address_details,
+  requested_start, estimated_duration_minutes, is_urgent, status, price, revised_price, price_status,
   paid_at, created_at, responded_at, completed_at
 `;
 
@@ -90,6 +99,9 @@ function mapRow(row: RequestRow): Request {
     serviceType: row.service_type as ServiceType | null,
     description: row.description,
     addressText: row.address_text,
+    latitude: row.latitude === null ? null : Number(row.latitude),
+    longitude: row.longitude === null ? null : Number(row.longitude),
+    addressDetails: row.address_details,
     requestedStart: formatMysqlDateTime(row.requested_start),
     estimatedDurationMinutes: row.estimated_duration_minutes,
     isUrgent: Boolean(row.is_urgent),
@@ -145,6 +157,9 @@ export interface InsertRequestInput {
   serviceType: ServiceType | null;
   description: string;
   addressText: string;
+  latitude: number | null;
+  longitude: number | null;
+  addressDetails: string | null;
   // requestedStart is written through mysql2's write path, which is
   // unaffected by dateStrings and encodes using the Date's UTC getters
   // (timezone: "Z"). Build it with Date.UTC(...) so the stored digits are
@@ -167,9 +182,9 @@ export async function insertRequest(
     await conn.query(
       `INSERT INTO requests (
          id, customer_id, provider_id, category_id, intake_session_id,
-         service_type, description, address_text, requested_start,
-         estimated_duration_minutes, is_urgent
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         service_type, description, address_text, latitude, longitude,
+         address_details, requested_start, estimated_duration_minutes, is_urgent
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         input.id,
         input.customerId,
@@ -179,6 +194,9 @@ export async function insertRequest(
         input.serviceType,
         input.description,
         input.addressText,
+        input.latitude,
+        input.longitude,
+        input.addressDetails,
         input.requestedStart,
         input.estimatedDurationMinutes,
         input.isUrgent,

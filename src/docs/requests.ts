@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { AI_STATUS } from "../constants/ai-status";
-import { DEFAULT_VISIT_MINUTES } from "../constants/booking";
+import { DEFAULT_VISIT_MINUTES, PIN_BOUNDS } from "../constants/booking";
 import { CATEGORY_NAMES, type CategoryName } from "../constants/categories";
 import { ITEM_SOURCE } from "../constants/item-source";
 import { PHOTO_KIND } from "../constants/photo-kind";
@@ -81,6 +81,21 @@ const request = z
     serviceType: z.enum(SERVICE_TYPE).nullable(),
     description: z.string(),
     addressText: z.string(),
+    latitude: documented(z.number().nullable(), {
+      description:
+        "The customer's map pin, for directions. null for a request booked without one; null exactly when longitude is null.",
+      examples: [33.8966],
+    }),
+    longitude: documented(z.number().nullable(), {
+      description:
+        "The map pin's longitude; null exactly when latitude is null.",
+      examples: [35.4823],
+    }),
+    addressDetails: documented(z.string().nullable(), {
+      description:
+        "Floor, door or landmark the customer added; null when blank.",
+      examples: ["3rd floor, blue door"],
+    }),
     requestedStart: documented(wallClock.nullable(), {
       description:
         "The start the customer chose. Once a quote is accepted, the visits hold the real times.",
@@ -354,7 +369,10 @@ function rescheduleAnswer(
 const BOOKING = {
   providerId: TONY.id,
   categoryId: 2,
-  addressText: "Hamra, Bliss Street, building 12, 3rd floor",
+  addressText: "Hamra, Bliss Street, building 12",
+  latitude: 33.8966,
+  longitude: 35.4823,
+  addressDetails: "3rd floor, blue door",
   requestedStart: demoStart(0),
 };
 
@@ -366,7 +384,7 @@ export const requestsPaths: Paths = {
       summary: "Book a provider",
       description: whoCanCall(
         "any signed-in user, as the customer (not with themselves)",
-        "Two shapes. From search: send description, estimatedDurationMinutes and optionally serviceType. From an intake session: send intakeSessionId and none of those three; the server takes them from the session and its diagnosis. requestedStart must be in the future: pick one from GET /providers/{id}/slots. The request starts pending; nothing is reserved until the customer accepts a quote. A provider who is not accepting jobs is a 409; a session already booked is a 409."
+        `Two shapes. From search: send description, estimatedDurationMinutes and optionally serviceType. From an intake session: send intakeSessionId and none of those three; the server takes them from the session and its diagnosis. latitude and longitude (the map pin, inside Lebanon's box: latitude ${PIN_BOUNDS.south}–${PIN_BOUNDS.north}, longitude ${PIN_BOUNDS.west}–${PIN_BOUNDS.east}, at most 6 decimals) are optional but sent together; a blank addressDetails is stored as null. requestedStart must be in the future: pick one from GET /providers/{id}/slots. The request starts pending; nothing is reserved until the customer accepts a quote. A provider who is not accepting jobs is a 409; a session already booked is a 409.`
       ),
       requestBody: jsonBody(createRequestSchema, {
         shownAs: {

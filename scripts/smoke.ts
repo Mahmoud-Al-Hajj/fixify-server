@@ -350,12 +350,18 @@ async function journey(): Promise<void> {
         providerId,
         categoryId,
         addressText: "Hamra, smoke test",
+        latitude: 33.8966,
+        longitude: 35.4823,
+        addressDetails: "  3rd floor  ",
         requestedStart: firstSlot,
         intakeSessionId: sessionId,
       }),
     [
       ["request.status", REQUEST_STATUS.PENDING],
       ["request.requestedStart", firstSlot],
+      ["request.latitude", 33.8966],
+      ["request.longitude", 35.4823],
+      ["request.addressDetails", "3rd floor"],
     ]
   );
   const id = text(booked, "request.id");
@@ -373,6 +379,8 @@ async function journey(): Promise<void> {
     [
       ["issueCard.aiStatus", liveAi ? AI_STATUS.DONE : AI_STATUS.NONE],
       ["issueCard.isLate", false],
+      ["issueCard.request.latitude", 33.8966],
+      ["issueCard.request.longitude", 35.4823],
     ]
   );
   if (!liveAi) {
@@ -484,7 +492,12 @@ async function journey(): Promise<void> {
           requestedStart: firstSlot,
           description: "Dripping bathroom tap",
           estimatedDurationMinutes: 60,
-        })
+        }),
+      [
+        ["request.latitude", null],
+        ["request.longitude", null],
+        ["request.addressDetails", null],
+      ]
     ),
     "request.id"
   );

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { SERVICE_TYPE } from "../constants/service-type";
 import { REQUEST_ACTOR_ROLE } from "../constants/request-status";
 import { PHOTO_KIND } from "../constants/photo-kind";
+import { PIN_BOUNDS } from "../constants/booking";
 
 export const LOCAL_DATETIME =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{3})?)?$/;
@@ -48,30 +49,74 @@ export const localDateTime = z.string().transform((value, ctx) => {
   return z.NEVER;
 });
 
+// At most 6 decimals, checked on the number's shortest round-trip form, which
+// is exactly the digits the client sent once the JSON is parsed. Numbers in
+// the pin's range never print in exponent form.
+const SIX_DECIMALS = /^\d+(\.\d{1,6})?$/;
+const coordinate = (min: number, max: number) =>
+  z
+    .number()
+    .min(min)
+    .max(max)
+    .refine((value) => SIX_DECIMALS.test(String(value)), {
+      message: "Expected at most 6 decimals",
+    })
+    .nullable()
+    .default(null);
+
 const bookingBase = {
   providerId: z.uuid(),
   categoryId: z.number().int().positive().max(65535),
   addressText: z.string().trim().min(1).max(300),
+  // The customer's map pin, for the provider's directions only; both or
+  // neither (pinTogether, and chk_req_pin in the schema).
+  latitude: coordinate(PIN_BOUNDS.south, PIN_BOUNDS.north),
+  longitude: coordinate(PIN_BOUNDS.west, PIN_BOUNDS.east),
+  // A blank field is absent rather than a 400.
+  addressDetails: z
+    .string()
+    .trim()
+    .max(300)
+    .transform((value) => (value === "" ? null : value))
+    .nullable()
+    .default(null),
   // Required: accepting a quote creates the first visit from it.
   requestedStart: localDateTime,
   isUrgent: z.boolean().default(false),
 };
 
+// A half pin names the coordinate that is missing.
+function pinTogether(
+  pin: { latitude: number | null; longitude: number | null },
+  ctx: z.RefinementCtx
+): void {
+  if ((pin.latitude === null) === (pin.longitude === null)) return;
+  ctx.addIssue({
+    code: "custom",
+    message: "latitude and longitude must be sent together",
+    path: [pin.latitude === null ? "latitude" : "longitude"],
+  });
+}
+
 // Plain category search: the client describes the job itself. Not strict, as
 // before. It never sees an intakeSessionId: that key selects the other shape.
-export const fromSearchSchema = z.object({
-  ...bookingBase,
-  serviceType: z.enum(SERVICE_TYPE).nullable().default(null),
-  description: z.string().trim().min(1).max(2000),
-  estimatedDurationMinutes: z.number().int().min(15).max(1440),
-});
+export const fromSearchSchema = z
+  .object({
+    ...bookingBase,
+    serviceType: z.enum(SERVICE_TYPE).nullable().default(null),
+    description: z.string().trim().min(1).max(2000),
+    estimatedDurationMinutes: z.number().int().min(15).max(1440),
+  })
+  .superRefine(pinTogether);
 
 // Booked from an intake session: the server derives service type, duration
 // and description (docs/ai-plan.md §13), so sending any of them is a 400.
-export const fromSessionSchema = z.strictObject({
-  ...bookingBase,
-  intakeSessionId: z.uuid(),
-});
+export const fromSessionSchema = z
+  .strictObject({
+    ...bookingBase,
+    intakeSessionId: z.uuid(),
+  })
+  .superRefine(pinTogether);
 
 // Which shape applies is decided by whether intakeSessionId is present, and
 // only that shape is validated, so an error names the field that failed

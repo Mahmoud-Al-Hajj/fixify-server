@@ -123,6 +123,9 @@ CREATE TABLE requests (
   service_type   VARCHAR(12),
   description    VARCHAR(2000) NOT NULL,
   address_text   VARCHAR(300)  NOT NULL,
+  latitude       DECIMAL(9,6),                          -- the customer's map pin (directions only)
+  longitude      DECIMAL(9,6),
+  address_details VARCHAR(300),                         -- floor, door, landmark
 
   requested_start            DATETIME(3),
 
@@ -319,7 +322,11 @@ ALTER TABLE requests
     estimated_duration_minutes BETWEEN 15 AND 1440),
   ADD CONSTRAINT chk_req_revision CHECK (
     revised_price IS NULL OR
-    (price_status = 'proposed' AND status = 'in_progress'));
+    (price_status = 'proposed' AND status = 'in_progress')),
+  ADD CONSTRAINT chk_req_pin CHECK (
+    (latitude IS NULL) = (longitude IS NULL) AND
+    (latitude IS NULL OR latitude BETWEEN -90 AND 90) AND
+    (longitude IS NULL OR longitude BETWEEN -180 AND 180));
 
 ALTER TABLE visits
   ADD CONSTRAINT chk_visits_status CHECK (status IN

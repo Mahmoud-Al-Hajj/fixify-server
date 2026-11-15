@@ -192,6 +192,9 @@ export type BookFromSessionInput = Pick<
   | "providerId"
   | "categoryId"
   | "addressText"
+  | "latitude"
+  | "longitude"
+  | "addressDetails"
   | "requestedStart"
   | "isUrgent"
 > & { intakeSessionId: string };
