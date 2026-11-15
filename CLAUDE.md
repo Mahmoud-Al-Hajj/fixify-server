@@ -110,9 +110,9 @@ upload into `request_photos`, and never add a `kind` for it.
 
 ### The issue card
 
-The issue card is a read model, not a table. It is what an assigned provider sees for a
-request: the request's confirmed description and diagnosis, the intake conversation and
-its photos (reached through `requests.intake_session_id`), and the current
+The issue card is a read model, not a table. It is what either party of a request (the
+customer or the assigned provider) sees for it, in one shape: the request's confirmed
+description and diagnosis, the intake conversation and its photos (reached through `requests.intake_session_id`), and the current
 `request_items`. The diagnosis carries `categoryId` (resolved by the server) and the card
 says `isLate` when it arrived after booking. A provider can read an intake session only
 through a request assigned to them — never directly by session id.

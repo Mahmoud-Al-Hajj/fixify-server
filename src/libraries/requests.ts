@@ -381,24 +381,16 @@ export interface IssueCard {
   items: RequestItem[];
 }
 
-// What the assigned provider reads for a job: the request, the customer's
-// intake conversation and its diagnosis (reached only through the request),
-// and the parts list. Late = the analysis was still pending at booking and is
-// done now; sessions are frozen after booking, so nothing else can make it
-// done later.
+// What either party reads for a job: the request, the customer's intake
+// conversation and its diagnosis, and the parts list. The provider reaches the
+// intake only through this request. Late = the analysis was still pending at
+// booking and is done now; sessions are frozen after booking, so nothing else
+// can make it done later.
 export async function getIssueCard(
   requestId: string,
   actorUserId: string
 ): Promise<IssueCard> {
-  const { request, actorRole } = await loadRequestForActor(
-    requestId,
-    actorUserId
-  );
-  if (actorRole !== REQUEST_ACTOR_ROLE.PROVIDER) {
-    throw new ForbiddenError(
-      "Only the assigned provider can open the issue card"
-    );
-  }
+  const { request } = await loadRequestForActor(requestId, actorUserId);
   const items = await listRequestItems(request.id);
   if (request.intakeSessionId === null) {
     return {

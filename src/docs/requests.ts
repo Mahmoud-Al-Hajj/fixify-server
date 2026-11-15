@@ -468,9 +468,9 @@ export const requestsPaths: Paths = {
     get: {
       ...ON_REQUEST,
       operationId: "getIssueCard",
-      summary: "What the provider reads about the job",
+      summary: "What either party reads about the job",
       description: whoCanCall(
-        "the assigned provider",
+        "the request's customer or provider",
         "The request, the customer's intake conversation and its diagnosis, and the parts list."
       ),
       parameters: REQUEST_ID,
