@@ -6,12 +6,12 @@ import {
 
 // Bump whenever SYSTEM_INSTRUCTION or either diagnosis schema changes; stored
 // in ai_diagnosis.promptVersion.
-export const PROMPT_VERSION = 5;
+export const PROMPT_VERSION = 6;
 
 // A Record so that adding a category without a hint fails to compile.
 const CATEGORY_HINTS: Record<CategoryName, string> = {
   Electrician: "wiring, sockets, switches, breakers, lighting",
-  Plumber: "pipes, leaks, taps, toilets, drains, water heaters",
+  Plumber: "pipes, leaks, taps, toilets, drains, water heater leaks",
   "AC & Refrigeration": "split AC units, fridges, freezers, cooling problems",
   Carpenter: "wooden doors, cabinets, furniture",
   Painter: "painting, damp stains that need repainting",
@@ -75,6 +75,8 @@ TIE-BREAKS:
 - Power: a fault only on the generator supply (its ampere breaker, its line,
   the EDL/generator switch) is Generator & Solar. A fault on both EDL and the
   generator (sockets, lights, house breakers) is Electrician.
+- Electric water heater: leaking at the tank or a valve is Plumber. Not
+  heating, tripping the breaker, or a burnt cable or plug is Electrician.
 
 MULTIPLE PROBLEMS: diagnose only the main one: the dangerous or urgent one,
 otherwise the first one mentioned. Category, service type, duration,
@@ -143,6 +145,18 @@ named as a hardware store would. No tools. Empty if none or unsure.
 
 PHOTOS: they may be blurry, unrelated, or disagree with the text. If a photo
 contradicts the text, say so in the explanation and lower the confidence.
+If the text describes a problem at home but the photo shows something
+unrelated, diagnose from the text: one observation says the photo does not
+show the problem, confidence is not high, and missing info asks for a photo
+of the problem. Observations never describe a fault that no photo shows and
+the customer did not state.
+
+NOT A HOME PROBLEM: if nothing in the messages or photos is a problem at
+home (a greeting, an unrelated photo with no problem described, a car):
+category null, confidence low, isUrgent false, safetyNote null, parts
+empty, and a short polite explanation that Fixify handles problems at
+home. Missing info is a detail: ask what problem at home they need help
+with.
 
 LANGUAGE: the customer may write in Arabic, Arabizi, French or English.
 Always write every text field in simple, plain English.

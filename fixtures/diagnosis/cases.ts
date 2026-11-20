@@ -152,7 +152,7 @@ export const CASES: DiagnosisCase[] = [
     id: "no-trade",
     note: "no trade fits: category null",
     turns: [{ sender: "customer", text: "my car makes a noise when I brake" }],
-    expect: { category: [null], safetyNote: false },
+    expect: { category: [null], confidence: ["low"], safetyNote: false },
   },
   {
     id: "contradiction",
@@ -258,20 +258,20 @@ export const CASES: DiagnosisCase[] = [
   },
   {
     id: "heater-not-heating",
-    note: "glossary: electric water heater; trade pending the heater tie-break",
+    note: "tie-break: water heater not heating is Electrician",
     turns: [{ sender: "customer", text: "sakhan el kahraba ma 3am ysakhen" }],
-    expect: { safetyNote: false },
+    expect: { category: ["Electrician"], safetyNote: false },
   },
   {
     id: "heater-trips-breaker",
-    note: "French: water heater trips the breaker; trade pending the heater tie-break",
+    note: "French; tie-break: water heater tripping the breaker is Electrician",
     turns: [
       {
         sender: "customer",
         text: "le chauffe-eau électrique fait sauter le disjoncteur",
       },
     ],
-    expect: {},
+    expect: { category: ["Electrician"] },
   },
   {
     id: "inverter-arabizi",
@@ -336,5 +336,39 @@ export const CASES: DiagnosisCase[] = [
       },
     ],
     expect: { confidence: ["low"], missingInfoKind: ["photo"] },
+  },
+  {
+    id: "unrelated-fix-this",
+    note: "unrelated photo, no problem described: no trade",
+    turns: [
+      {
+        sender: "customer",
+        text: "can you fix this",
+        photos: ["unrelated-1.jpg"],
+      },
+    ],
+    expect: { category: [null], confidence: ["low"], safetyNote: false },
+  },
+  {
+    id: "leak-unrelated-photo",
+    note: "home problem in the text, unrelated photo: diagnose from the text",
+    turns: [
+      {
+        sender: "customer",
+        text: "water leaking under my kitchen sink",
+        photos: ["unrelated-2.jpg"],
+      },
+    ],
+    expect: {
+      category: ["Plumber"],
+      confidence: ["low", "medium"],
+      missingInfoKind: ["photo"],
+    },
+  },
+  {
+    id: "greeting-unrelated",
+    note: "a greeting and an unrelated photo: no trade",
+    turns: [{ sender: "customer", text: "hi", photos: ["unrelated-1.jpg"] }],
+    expect: { category: [null], safetyNote: false },
   },
 ];

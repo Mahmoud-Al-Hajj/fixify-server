@@ -49,6 +49,8 @@ const FIXTURES_DIR = path.join(__dirname, "..", "fixtures", "diagnosis");
 const PHOTOS_DIR = path.join(FIXTURES_DIR, "photos");
 const RUNS_DIR = path.join(FIXTURES_DIR, "runs");
 const CATEGORY_MISS_SHARE = 0.15; // at most 15% of category checks, rounded down
+// No home problem at all: category null on every call (§14.6).
+const UNRELATED_CASES = ["unrelated-fix-this", "greeting-unrelated"];
 const ARABIC_SCRIPT = /[\u0600-\u06FF]/;
 
 interface Check {
@@ -555,6 +557,11 @@ function evaluatePassBar(calls: CallRecord[], repeat: number): PassBarRow[] {
       "missingInfo kind",
       where((c) => c.expect.missingInfoKind !== undefined),
       (call) => passed(call, "missingInfoKind")
+    ),
+    everyCall(
+      "unrelated input: category null",
+      where((c) => UNRELATED_CASES.includes(c.id)),
+      (call) => passed(call, "category")
     ),
     {
       check: "latency: slowest call",
