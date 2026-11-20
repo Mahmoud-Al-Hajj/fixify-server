@@ -3,3 +3,5 @@ dist
 package-lock.json
 *.md
 graphify-out
+AI_DEMO.html
+.impeccable/

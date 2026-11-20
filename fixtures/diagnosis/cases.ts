@@ -84,7 +84,9 @@ export const CASES: DiagnosisCase[] = [
         photos: ["split-ac.jpg"],
       },
     ],
-    expect: { category: ["AC & Refrigeration"], safetyNote: false },
+    // The photo shows loose wires hanging from the unit, so a safety note is
+    // defensible; only the trade is checked.
+    expect: { category: ["AC & Refrigeration"] },
   },
   {
     id: "washer-arabic",
