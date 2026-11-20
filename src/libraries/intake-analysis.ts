@@ -32,7 +32,7 @@ import {
   type AttemptName,
 } from "./ai/hedged-diagnose";
 import { PROMPT_VERSION } from "./ai/diagnosis-prompt";
-import type { StoredDiagnosis } from "./ai/diagnosis-schema";
+import { aiMessageBody, type StoredDiagnosis } from "./ai/diagnosis-schema";
 import {
   CALLER_FAILURE,
   DiagnosisError,
@@ -150,7 +150,7 @@ async function runAnalysis(
       await insertIntakeMessage(conn, {
         sessionId,
         sender: MESSAGE_SENDER.AI,
-        body: result.diagnosis.explanation,
+        body: aiMessageBody(result.diagnosis),
       });
       return true;
     });

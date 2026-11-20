@@ -3,7 +3,10 @@ import { AI_STATUS } from "../constants/ai-status";
 import { ERROR_CODE } from "../constants/errors";
 import { MESSAGE_SENDER } from "../constants/message-sender";
 import type { toMessageView } from "../controllers/intake";
-import { diagnosisSchema } from "../libraries/ai/diagnosis-schema";
+import {
+  MISSING_INFO_KINDS,
+  storedDiagnosisFieldsSchema,
+} from "../libraries/ai/diagnosis-schema";
 import type { DiagnosisView, getOwnSession } from "../libraries/intake";
 import type { startAnalysis } from "../libraries/intake-analysis";
 import type { IntakeSession } from "../models-db/intake";
@@ -59,8 +62,10 @@ sameShape<z.output<typeof messageView>, ReturnType<typeof toMessageView>>(true);
 // What a finished diagnosis looks like; the test parses it with
 // diagnosisView.
 export const DIAGNOSIS_EXAMPLE = {
+  observations: ["Water is dripping from the trap under the sink."],
   title: "Leaking sink trap",
   confidence: "high",
+  missingInfo: null,
   category: "Plumber",
   serviceType: "repair",
   durationMinutes: 60,
@@ -74,8 +79,21 @@ export const DIAGNOSIS_EXAMPLE = {
 
 // libraries/intake.ts DiagnosisView: the AI's validated output, never
 // edited, plus the category id the server resolved from its name.
-export const diagnosisView = diagnosisSchema
+export const diagnosisView = storedDiagnosisFieldsSchema
   .extend({
+    observations: documented(z.array(z.string()).max(4), {
+      description:
+        "Facts the customer stated or the photos show. Empty for a diagnosis made before prompt v5.",
+    }),
+    missingInfo: documented(
+      z
+        .object({ kind: z.enum(MISSING_INFO_KINDS), ask: z.string() })
+        .nullable(),
+      {
+        description:
+          "The photo or detail that would settle the diagnosis; set when confidence is low, null for a diagnosis made before prompt v5. ask is already appended to the AI message.",
+      }
+    ),
     categoryId: documented(z.number().int().nullable(), {
       description:
         "The diagnosed trade's id, for GET /providers; null when the diagnosis names no trade.",

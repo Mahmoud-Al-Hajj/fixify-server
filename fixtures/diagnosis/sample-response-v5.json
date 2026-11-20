@@ -1,0 +1,32 @@
+{
+  "observations": [
+    "Water is leaking from the P-trap assembly under the kitchen sink.",
+    "Multiple joints on the drainage pipe appear to be leaking."
+  ],
+  "title": "Leaking P-trap under kitchen sink",
+  "confidence": "high",
+  "missingInfo": null,
+  "category": "Plumber",
+  "serviceType": "repair",
+  "durationMinutes": 60,
+  "explanation": "The drainage pipe under your sink is leaking at the joints. The plumber will inspect the pipe assembly and likely replace the P-trap or tighten the connections to fix the leak. Please place a bucket under the leak to catch the water and avoid using the sink until the repair is complete.",
+  "isUrgent": true,
+  "safetyNote": null,
+  "suggestedParts": [
+    {
+      "name": "P-trap kit",
+      "quantity": 1,
+      "unit": null
+    },
+    {
+      "name": "Plumber's tape (Teflon tape)",
+      "quantity": 1,
+      "unit": null
+    },
+    {
+      "name": "PVC pipe sealant",
+      "quantity": 1,
+      "unit": null
+    }
+  ]
+}

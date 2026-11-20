@@ -6,7 +6,7 @@ import {
 
 // Bump whenever SYSTEM_INSTRUCTION or either diagnosis schema changes; stored
 // in ai_diagnosis.promptVersion.
-export const PROMPT_VERSION = 4;
+export const PROMPT_VERSION = 5;
 
 // A Record so that adding a category without a hint fails to compile.
 const CATEGORY_HINTS: Record<CategoryName, string> = {
@@ -48,6 +48,41 @@ CATEGORY: exactly one of these names, or null:
 ${CATEGORY_LINES}
 Use null only if no trade on this list would fix the problem at a home.
 
+LEBANESE TERMS customers often use:
+- ishtirak, moteur: the private generator subscription (Generator & Solar).
+  If the message is about internet, a router or a dish, ishtirak means an
+  internet subscription (Satellite & Internet).
+- EDL, kahraba el dawle: state electricity; it tells you which supply fails.
+- disjoncteur, tableau: a breaker, the breaker panel (Electrician, unless it
+  is the generator subscription's breaker).
+- inverter, UPS, batterie, panneaux: backup or solar power (Generator & Solar).
+- priz, prise: a socket (Electrician).
+- khazzan: the water tank, usually on the roof (Plumber; its metal stand is
+  Welding & Metalwork).
+- sakhan, chauffe-eau: water heater.
+- ghassale: washing machine. barrad: fridge.
+- chofaj, chauffage: central heating (Plumber).
+- rtoube: damp. naz, ynezz: seeping.
+- tamdidat: wiring or pipe runs: Electrician with kahraba, Plumber with mayy.
+
+TIE-BREAKS:
+- Damp stain: growing, wet or dripping, or under a bathroom, kitchen or
+  water tank, is an active leak (Plumber). Old, dry, peeling paint and not
+  growing is Painter.
+- Windows and doors go by material: aluminium frame, sliding track or glass
+  is Aluminium & Glass; a wooden frame is Carpenter; an iron grille is
+  Welding & Metalwork.
+- Power: a fault only on the generator supply (its ampere breaker, its line,
+  the EDL/generator switch) is Generator & Solar. A fault on both EDL and the
+  generator (sockets, lights, house breakers) is Electrician.
+
+MULTIPLE PROBLEMS: diagnose only the main one: the dangerous or urgent one,
+otherwise the first one mentioned. Category, service type, duration,
+urgency, safety note and parts describe only that problem. Mention the
+other one in one sentence of the explanation and say it needs a separate
+booking. A photo that shows something other than what the text describes
+is not a second problem: it is a contradiction (see PHOTOS).
+
 SERVICE TYPE: repair (something broken), installation (something new),
 maintenance (routine servicing), inspection (find out what is wrong), other.
 
@@ -72,7 +107,23 @@ appliances. Also use null for lockouts, appliances or AC units that
 stopped working, stains, cracks in tiles, and anything cosmetic.
 Only write a note for a danger that is present now, never a conditional
 one such as "if water reaches the sockets…". If unsure, use null.
+A step that only limits water damage, such as closing the water valve, is
+never a safety note; put it in the explanation.
 Never give repair instructions.
+
+OBSERVATIONS: 1 to 4 short facts, each under 150 characters, that the
+customer stated or that are plainly visible in a photo, e.g. "Water is
+pooling under the sink trap." Never a guess about the cause, and never a
+note about what is missing or unknown (that goes in missing info). If a
+photo is unclear, say only what can be seen in it.
+
+MISSING INFO: the one photo or detail that would settle the diagnosis.
+kind is photo or detail; ask is one short sentence to the customer, under
+100 characters, e.g. "A photo of the pipe under the sink would help."
+Required when confidence is low, allowed when medium, null when high.
+Use photo whenever the problem is something a photo would show: for a
+leak, water, damp, a stain, damage or a broken part, kind is always photo.
+Use detail only when a photo cannot help, e.g. when it happens.
 
 TITLE: a short headline of the likely problem, under 80 characters,
 e.g. "Likely worn seal under the sink".
@@ -82,9 +133,8 @@ EXPLANATION: Write it to the customer, using "you" (never "the customer").
 the professional will do. If there is a simple step the customer can
 take while waiting to limit damage (a bucket under the leak, closing
 the water valve, not using the sink), add it as one more short
-sentence. That is not a repair. If confidence is low, the last sentence
-must say which photo or detail would help, e.g. "A photo of the fridge
-would help."
+sentence. That is not a repair. Don't ask for photos or details here;
+that goes in missing info.
 Never mention prices. Never tell the customer to do the repair
 themselves. Don't repeat the safety note in the explanation.
 
@@ -96,7 +146,8 @@ contradicts the text, say so in the explanation and lower the confidence.
 
 LANGUAGE: the customer may write in Arabic, Arabizi, French or English.
 Always write every text field in simple, plain English.
-Enum values (category, service type, confidence) exactly as listed above.
+Enum values (category, service type, confidence, missing info kind)
+exactly as listed above.
 `.trim();
 
 export interface PromptMessage {

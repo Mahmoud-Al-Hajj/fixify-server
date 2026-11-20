@@ -685,7 +685,7 @@ by default.
 
 ## Working rules
 
-- Prompt and model work is frozen: no prompt changes or replay runs unless something breaks.
+- Prompt and model work is frozen at v5: no prompt changes or replay runs unless something breaks.
 - `docs/ai-plan.md` is the only plan. Doc fixes ride along with the next feature commit;
   no docs-only commits.
 - Estimate and stop for approval only for steps over ~100 lines. Smaller changes: build,
