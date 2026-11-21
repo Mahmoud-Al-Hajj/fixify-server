@@ -5,8 +5,16 @@ import type { Diagnosis } from "./ai/diagnosis-schema";
 import { buildDescription, deriveBookingFields } from "./booking-from-session";
 
 const DIAGNOSIS: Diagnosis = {
+  observations: [
+    {
+      text: "Water drips from the trap under the kitchen sink.",
+      photoIndex: null,
+      box: null,
+    },
+  ],
   title: "Leaking P-trap under the kitchen sink",
   confidence: "high",
+  missingInfo: null,
   category: "Plumber",
   serviceType: "repair",
   durationMinutes: 90,

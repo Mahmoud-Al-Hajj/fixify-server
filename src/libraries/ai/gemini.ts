@@ -30,7 +30,7 @@ export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
 // The settings chosen in docs/ai-plan.md §14.7. max_output_tokens includes
 // thinking tokens.
 export const DEFAULT_THINKING_LEVEL: ThinkingLevel = "low";
-export const DEFAULT_MAX_OUTPUT_TOKENS = 1024;
+export const DEFAULT_MAX_OUTPUT_TOKENS = 3072;
 
 export interface DiagnosisInput {
   messages: PromptMessage[];

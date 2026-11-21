@@ -1,7 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { MESSAGE_SENDER } from "../../constants/message-sender";
-import { buildContent, type PromptPhoto } from "./diagnosis-prompt";
+import {
+  buildContent,
+  photosInContentOrder,
+  type PromptPhoto,
+} from "./diagnosis-prompt";
 
 const photo = (messageId: number, data: string): PromptPhoto => ({
   messageId,
@@ -24,6 +28,24 @@ test("each message's text comes before its own photos, in message order", () => 
     { type: "text", text: "Customer message 2:\nand the tap drips" },
     { type: "image", data: "C", mime_type: "image/jpeg" },
   ]);
+});
+
+// A diagnosis's photoIndex N is read back as the Nth photo of this order.
+test("photosInContentOrder is the order buildContent sends the images", () => {
+  const messages = [
+    { id: 1, sender: MESSAGE_SENDER.CUSTOMER, body: "water under the sink" },
+    { id: 2, sender: MESSAGE_SENDER.AI, body: "A photo would help." },
+    { id: 3, sender: MESSAGE_SENDER.CUSTOMER, body: null },
+  ];
+  const photos = [photo(3, "C"), photo(1, "A"), photo(9, "X"), photo(1, "B")];
+  const sent = buildContent(messages, photos).flatMap((part) =>
+    part.type === "image" ? [part.data] : []
+  );
+  assert.deepEqual(sent, ["A", "B", "C"]);
+  assert.deepEqual(
+    photosInContentOrder(messages, photos).map((p) => p.data),
+    sent
+  );
 });
 
 test("a message with no text is marked as photo only", () => {

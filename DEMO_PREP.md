@@ -53,7 +53,7 @@ password `Demo1234!` · photo `fixtures/diagnosis/photos/sink-leak.jpg`.
 | 10  | Tony: `GET /requests/{id}/issue-card`                | 200                     | "The provider reaches the intake only through a job assigned to them."                          |
 | 11  | Tony: `POST /requests/{id}/quote` `{"price":"45.00"}` | 200 `proposed`         | "Money is a decimal string. Quote state is separate from job status."                           |
 | 12  | Rana: `POST /requests/{id}/quote/accept`             | 200 `scheduled`         | "Lock provider row, check overlap, insert visit, write event: one transaction plus a unique key." |
-| 13  | `GET /requests/{id}/timeline`, then issue-card as Rana | 200, then **403**     | "Append-only events feed the timeline; role is checked per action."                             |
+| 13  | `GET /requests/{id}/timeline`, then start as Rana    | 200, then **403**       | "Append-only events feed the timeline; role is checked per action."                             |
 
 **Top 10 keywords:** layered architecture · zod validation at the edge ·
 stateless JWT · ACID transaction with `SELECT … FOR UPDATE` · constraints in the
@@ -367,14 +367,10 @@ update the request, insert the visit, write the event. A unique key on the
 provider's active slot is the second guard."
 
 **Step 13. History and a refusal.** `GET /requests/{id}/timeline`, then
-`GET /requests/{id}/issue-card` as Rana → **403** **[captured]**:
-
-```json
-{ "error": { "code": "FORBIDDEN", "message": "Only the assigned provider can open the issue card" } }
-```
+`POST /requests/{id}/start` as Rana → **403**.
 
 Say: "Every action writes an append-only event; the timeline and the
-notifications both read that table. Rana owns the job, but the issue card is a
+notifications both read that table. Rana owns the job, but starting it is a
 provider action, so it's 403."
 
 ---

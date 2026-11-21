@@ -1,6 +1,9 @@
 import type { CategoryName } from "../../src/constants/categories";
 import type { ServiceType } from "../../src/constants/service-type";
-import type { Confidence } from "../../src/libraries/ai/diagnosis-schema";
+import type {
+  Confidence,
+  MissingInfoKind,
+} from "../../src/libraries/ai/diagnosis-schema";
 
 // Replay cases for the intake diagnosis (docs/ai-plan.md §14.3). Photo names
 // are files in fixtures/diagnosis/photos/.
@@ -21,6 +24,7 @@ export type DiagnosisCase = {
     isUrgent?: boolean;
     safetyNote?: boolean; // true = must exist, false = must be null
     confidence?: Confidence[];
+    missingInfoKind?: MissingInfoKind[]; // missingInfo set, with one of these kinds
   };
 };
 
@@ -80,7 +84,9 @@ export const CASES: DiagnosisCase[] = [
         photos: ["split-ac.jpg"],
       },
     ],
-    expect: { category: ["AC & Refrigeration"], safetyNote: false },
+    // The photo shows loose wires hanging from the unit, so a safety note is
+    // defensible; only the trade is checked.
+    expect: { category: ["AC & Refrigeration"] },
   },
   {
     id: "washer-arabic",
@@ -146,7 +152,7 @@ export const CASES: DiagnosisCase[] = [
     id: "no-trade",
     note: "no trade fits: category null",
     turns: [{ sender: "customer", text: "my car makes a noise when I brake" }],
-    expect: { category: [null], safetyNote: false },
+    expect: { category: [null], confidence: ["low"], safetyNote: false },
   },
   {
     id: "contradiction",
@@ -221,5 +227,148 @@ export const CASES: DiagnosisCase[] = [
       serviceType: ["installation"],
       safetyNote: false,
     },
+  },
+  {
+    id: "ishtirak-arabizi",
+    note: "glossary: generator subscription, only that supply fails",
+    turns: [
+      {
+        sender: "customer",
+        text: "el ishtirak 3am ya2ta3 kel shway bas EDL mni7a",
+      },
+    ],
+    expect: { category: ["Generator & Solar"], safetyNote: false },
+  },
+  {
+    id: "wiring-both-sources",
+    note: "tie-break: fault on EDL and the generator is house wiring",
+    turns: [
+      {
+        sender: "customer",
+        text: "the kitchen lights flicker on EDL and on the moteur too",
+      },
+    ],
+    expect: { category: ["Electrician"] },
+  },
+  {
+    id: "khazzan-arabizi",
+    note: "glossary: roof water tank leaking",
+    turns: [{ sender: "customer", text: "el khazzan 3al sateh 3am ynaz may" }],
+    expect: { category: ["Plumber"], safetyNote: false },
+  },
+  {
+    id: "heater-not-heating",
+    note: "tie-break: water heater not heating is Electrician",
+    turns: [{ sender: "customer", text: "sakhan el kahraba ma 3am ysakhen" }],
+    expect: { category: ["Electrician"], safetyNote: false },
+  },
+  {
+    id: "heater-trips-breaker",
+    note: "French; tie-break: water heater tripping the breaker is Electrician",
+    turns: [
+      {
+        sender: "customer",
+        text: "le chauffe-eau électrique fait sauter le disjoncteur",
+      },
+    ],
+    expect: { category: ["Electrician"] },
+  },
+  {
+    id: "inverter-arabizi",
+    note: "glossary: inverter and batteries",
+    turns: [
+      {
+        sender: "customer",
+        text: "el inverter 3am yzammer w ma 3am yshahen el batteries",
+      },
+    ],
+    expect: { category: ["Generator & Solar"], safetyNote: false },
+  },
+  {
+    id: "arabic-photo",
+    note: "Arabic text with a photo, English output",
+    turns: [
+      {
+        sender: "customer",
+        text: "في مي عم تنقط من تحت المجلى",
+        photos: ["sink-leak.jpg"],
+      },
+    ],
+    expect: { category: ["Plumber"], isUrgent: true, safetyNote: false },
+  },
+  {
+    id: "multi-issue",
+    note: "two problems: diagnose the leak, mention the hinge in one sentence",
+    turns: [
+      {
+        sender: "customer",
+        text: "water is leaking under my kitchen sink, and also one cupboard door hinge is broken",
+        photos: ["sink-leak.jpg"],
+      },
+    ],
+    expect: { category: ["Plumber"], safetyNote: false },
+  },
+  {
+    id: "old-damp-stain",
+    note: "tie-break: an old dry stain is Painter, not urgent",
+    turns: [
+      {
+        sender: "customer",
+        text: "old brown stain on the bedroom ceiling, it has been there for years, it is dry and the paint is peeling",
+        photos: ["ceiling-stain.jpg"],
+      },
+    ],
+    expect: { category: ["Painter"], isUrgent: false, safetyNote: false },
+  },
+  {
+    id: "photo-only-observations",
+    note: "photo only: observations must describe only what is visible",
+    turns: [{ sender: "customer", text: null, photos: ["floor-crack.jpg"] }],
+    expect: { safetyNote: false },
+  },
+  {
+    id: "low-needs-photo",
+    note: "too vague: low confidence, asks for a photo",
+    turns: [
+      {
+        sender: "customer",
+        text: "there's a problem in the bathroom, water somewhere",
+      },
+    ],
+    expect: { confidence: ["low"], missingInfoKind: ["photo"] },
+  },
+  {
+    id: "unrelated-fix-this",
+    note: "unrelated photo, no problem described: no trade",
+    turns: [
+      {
+        sender: "customer",
+        text: "can you fix this",
+        photos: ["unrelated-1.jpg"],
+      },
+    ],
+    expect: { category: [null], confidence: ["low"], safetyNote: false },
+  },
+  {
+    id: "leak-unrelated-photo",
+    note: "home problem in the text, unrelated photo: diagnose from the text",
+    turns: [
+      {
+        sender: "customer",
+        text: "water leaking under my kitchen sink",
+        photos: ["unrelated-2.jpg"],
+      },
+    ],
+    expect: {
+      category: ["Plumber"],
+      confidence: ["low", "medium"],
+      missingInfoKind: ["photo"],
+    },
+  },
+  {
+    id: "greeting-unrelated",
+    note: "a greeting and an unrelated photo: no trade",
+    turns: [{ sender: "customer", text: "hi", photos: ["unrelated-1.jpg"] }],
+    expect: { category: [null], safetyNote: false },
   },
 ];

@@ -25,7 +25,10 @@ import {
   PROMPT_VERSION,
   SYSTEM_INSTRUCTION,
 } from "../src/libraries/ai/diagnosis-prompt";
-import type { Diagnosis } from "../src/libraries/ai/diagnosis-schema";
+import {
+  isDrawableBox,
+  type Diagnosis,
+} from "../src/libraries/ai/diagnosis-schema";
 import {
   diagnose,
   THINKING_LEVELS,
@@ -48,6 +51,9 @@ const SLOW_MS = 30_000; // §14.6: revisit the timeout or thinking level above t
 const FIXTURES_DIR = path.join(__dirname, "..", "fixtures", "diagnosis");
 const PHOTOS_DIR = path.join(FIXTURES_DIR, "photos");
 const RUNS_DIR = path.join(FIXTURES_DIR, "runs");
+const CATEGORY_MISS_SHARE = 0.15; // at most 15% of category checks, rounded down
+// No home problem at all: category null on every call (§14.6).
+const UNRELATED_CASES = ["unrelated-fix-this", "greeting-unrelated"];
 const ARABIC_SCRIPT = /[\u0600-\u06FF]/;
 
 interface Check {
@@ -280,7 +286,41 @@ function runChecks(testCase: DiagnosisCase, d: Diagnosis): Check[] {
       pass: expect.confidence.includes(d.confidence),
     });
   }
+  if (expect.missingInfoKind) {
+    checks.push({
+      name: "missingInfoKind",
+      pass:
+        d.missingInfo !== null &&
+        expect.missingInfoKind.includes(d.missingInfo.kind),
+    });
+  }
+  // The prompt's rule, checked on every call: set when low, null when high.
+  checks.push({
+    name: "missingInfo",
+    pass:
+      d.confidence === "low"
+        ? d.missingInfo !== null
+        : d.confidence === "high"
+          ? d.missingInfo === null
+          : true,
+  });
+  // v8: a photo observation names a photo that was sent and has a drawable
+  // box; a text observation has neither. Coverage is judged by eye.
+  const photoCount = photosOf(testCase).length;
+  checks.push({
+    name: "boxes",
+    pass: d.observations.every(({ photoIndex, box }) =>
+      photoIndex === null
+        ? box === null
+        : Number.isInteger(photoIndex) &&
+          photoIndex >= 1 &&
+          photoIndex <= photoCount &&
+          isDrawableBox(box)
+    ),
+  });
   const texts = [
+    ...d.observations.map((o) => o.text),
+    d.missingInfo?.ask ?? "",
     d.title,
     d.explanation,
     d.safetyNote ?? "",
@@ -371,6 +411,7 @@ function summaryRow(call: CallRecord, testCase: DiagnosisCase) {
       d ? d.safetyNote !== null : null
     ),
     latency: `${(call.latencyMs / 1000).toFixed(1)}s${call.wouldHaveTimedOut ? " SLOW" : ""}`,
+    missingInfo: shown(expect.missingInfoKind, d?.missingInfo?.kind ?? null),
     "http / after": `${call.httpMs ?? "-"} / ${call.afterResponseMs ?? "-"} ms`,
     tries: call.httpAttempts,
     "tokens in/out/think": tokens,
@@ -430,8 +471,15 @@ function evaluatePassBar(calls: CallRecord[], repeat: number): PassBarRow[] {
   };
   const passed = (call: CallRecord, name: string) =>
     call.checks.some((k) => k.name === name && k.pass);
+  // A provider error (e.g. a 503) says nothing about the prompt: it is left
+  // out of every row (a row missing calls shows as a partial run), and a case
+  // with no answered call is re-run once with --case (§14.6).
+  const answered = calls.filter(
+    (call) => call.failure?.kind !== DIAGNOSIS_FAILURE.PROVIDER_ERROR
+  );
+  const providerErrors = calls.length - answered.length;
   const where = (keep: (c: DiagnosisCase) => boolean) =>
-    calls.filter((call) => keep(caseOf(call)));
+    answered.filter((call) => keep(caseOf(call)));
 
   const everyCall = (
     check: string,
@@ -481,7 +529,13 @@ function evaluatePassBar(calls: CallRecord[], repeat: number): PassBarRow[] {
   const noNoteCalls = where(expectsNoNote);
   const slowest = Math.max(0, ...calls.map((c) => c.latencyMs));
   const rows: PassBarRow[] = [
-    everyCall("schema valid", calls, (call) => call.diagnosis !== null),
+    everyCall(
+      providerErrors === 0
+        ? "schema valid"
+        : `schema valid (${providerErrors} provider error(s) left out)`,
+      answered,
+      (call) => call.diagnosis !== null
+    ),
     everyCall(
       "safety cases: urgent + safety note",
       where((c) => c.expect.safetyNote === true),
@@ -491,7 +545,7 @@ function evaluatePassBar(calls: CallRecord[], repeat: number): PassBarRow[] {
       "category",
       categoryCalls,
       (call) => passed(call, "category"),
-      2,
+      Math.floor(CASES.filter(checksCategory).length * CATEGORY_MISS_SHARE),
       categoryCalls.length < CASES.filter(checksCategory).length * repeat
     ),
     everyCall(
@@ -510,6 +564,26 @@ function evaluatePassBar(calls: CallRecord[], repeat: number): PassBarRow[] {
       "no Arabic script",
       calls.filter((call) => call.diagnosis !== null),
       (call) => passed(call, "english")
+    ),
+    everyCall(
+      "missingInfo: set when low, null when high",
+      calls.filter((call) => call.diagnosis !== null),
+      (call) => passed(call, "missingInfo")
+    ),
+    everyCall(
+      "missingInfo kind",
+      where((c) => c.expect.missingInfoKind !== undefined),
+      (call) => passed(call, "missingInfoKind")
+    ),
+    everyCall(
+      "boxes: on a sent photo and drawable",
+      calls.filter((call) => call.diagnosis !== null),
+      (call) => passed(call, "boxes")
+    ),
+    everyCall(
+      "unrelated input: category null",
+      where((c) => UNRELATED_CASES.includes(c.id)),
+      (call) => passed(call, "category")
     ),
     {
       check: "latency: slowest call",

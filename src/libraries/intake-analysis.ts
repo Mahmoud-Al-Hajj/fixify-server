@@ -31,8 +31,8 @@ import {
   HedgeFailedError,
   type AttemptName,
 } from "./ai/hedged-diagnose";
-import { PROMPT_VERSION } from "./ai/diagnosis-prompt";
-import type { StoredDiagnosis } from "./ai/diagnosis-schema";
+import { photosInContentOrder, PROMPT_VERSION } from "./ai/diagnosis-prompt";
+import { aiMessageBody, type StoredDiagnosis } from "./ai/diagnosis-schema";
 import {
   CALLER_FAILURE,
   DiagnosisError,
@@ -143,6 +143,7 @@ async function runAnalysis(
       model: result.model,
       promptVersion: PROMPT_VERSION,
       completedAt: beirutNow().toISOString().slice(0, 23),
+      photoIds: input.photoIds,
       diagnosis: result.diagnosis,
     };
     const settled = await withTransaction(async (conn) => {
@@ -150,7 +151,7 @@ async function runAnalysis(
       await insertIntakeMessage(conn, {
         sessionId,
         sender: MESSAGE_SENDER.AI,
-        body: result.diagnosis.explanation,
+        body: aiMessageBody(result.diagnosis),
       });
       return true;
     });
@@ -242,7 +243,11 @@ async function diagnoseOrReuse(
 // The messages in order and the newest photos, read from the paths stored in
 // intake_photos and only from inside the intake upload directory. A photo
 // whose file is missing is left out rather than failing the analysis.
-async function loadAnalysisInput(sessionId: string): Promise<DiagnosisInput> {
+// photoIds: the ids of the photos sent, in the order the model sees them, so
+// a diagnosis's photoIndex can be read back as a photo id.
+async function loadAnalysisInput(
+  sessionId: string
+): Promise<DiagnosisInput & { photoIds: number[] }> {
   const messages = await listIntakeMessages(sessionId);
   const newest = messages
     .flatMap((message) =>
@@ -262,15 +267,18 @@ async function loadAnalysisInput(sessionId: string): Promise<DiagnosisInput> {
         return null;
       }
       return {
+        id: photo.id,
         messageId: photo.messageId,
         mimeType,
         data: bytes.toString("base64"),
       };
     })
   );
+  const sent = photos.filter((photo) => photo !== null);
   return {
     messages,
-    photos: photos.filter((photo) => photo !== null),
+    photos: sent,
+    photoIds: photosInContentOrder(messages, sent).map((photo) => photo.id),
   };
 }
 

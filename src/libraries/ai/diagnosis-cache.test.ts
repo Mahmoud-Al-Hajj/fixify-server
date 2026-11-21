@@ -11,8 +11,12 @@ import type { DiagnosisInput } from "./gemini";
 const value: CachedDiagnosis = {
   model: "m",
   diagnosis: {
+    observations: [
+      { text: "Water under the sink", photoIndex: null, box: null },
+    ],
     title: "Leak under the sink",
     confidence: "high",
+    missingInfo: null,
     category: "Plumber",
     serviceType: "repair",
     durationMinutes: 60,

@@ -102,6 +102,18 @@ async function api(
   return { status: res.status, body: (await res.json()) as Json };
 }
 
+// An image route: the status, and the content type in place of a JSON body.
+async function getPhoto(path: string, token: string): Promise<Reply> {
+  const res = await fetch(BASE + path, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  await res.arrayBuffer();
+  return {
+    status: res.status,
+    body: { contentType: res.headers.get("content-type") },
+  };
+}
+
 let stepNo = 0;
 
 // One step: the expected status, then any [path, value] checks on the body.
@@ -369,10 +381,7 @@ async function journey(): Promise<void> {
   await step("refused: customer rejects", 403, () =>
     api("POST", req("/reject"), customer)
   );
-  await step("refused: customer opens the issue card", 403, () =>
-    api("GET", req("/issue-card"), customer)
-  );
-  await step(
+  const providerCard = await step(
     "issue card",
     200,
     () => api("GET", req("/issue-card"), provider),
@@ -382,6 +391,41 @@ async function journey(): Promise<void> {
       ["issueCard.request.latitude", 33.8966],
       ["issueCard.request.longitude", 35.4823],
     ]
+  );
+  const customerCard = await step("issue card (customer)", 200, () =>
+    api("GET", req("/issue-card"), customer)
+  );
+  if (JSON.stringify(customerCard) !== JSON.stringify(providerCard)) {
+    throw new SmokeFailure(
+      `the customer's issue card differs from the provider's: ${JSON.stringify(customerCard)}`
+    );
+  }
+  const photoUrl = list(customerCard, "issueCard.messages")
+    .flatMap((m) => list(m, "photos"))
+    .map((p) => text(p, "url"))[0];
+  if (photoUrl === undefined) {
+    throw new SmokeFailure("the issue card lists no intake photo");
+  }
+  await step(
+    "customer fetches the photo from their issue card",
+    200,
+    () => getPhoto(photoUrl, customer),
+    [["contentType", "image/jpeg"]]
+  );
+  await step("refused: another customer opens the issue card", 403, () =>
+    api("GET", req("/issue-card"), rana)
+  );
+  const tony = text(
+    await step("login seed provider Tony", 200, () =>
+      api("POST", "/auth/login", null, {
+        email: "tony@demo.fixify",
+        password: "Demo1234!",
+      })
+    ),
+    "token"
+  );
+  await step("refused: a provider not assigned opens the issue card", 403, () =>
+    api("GET", req("/issue-card"), tony)
   );
   if (!liveAi) {
     await step(
@@ -467,6 +511,9 @@ async function journey(): Promise<void> {
   await step("refused: a stranger reads the request", 403, () =>
     api("GET", req(""), stranger)
   );
+  await step("refused: a stranger fetches the intake photo", 403, () =>
+    getPhoto(photoUrl, stranger)
+  );
 
   // Quote, acceptance, reschedule.
   await step(
@@ -500,6 +547,17 @@ async function journey(): Promise<void> {
       ]
     ),
     "request.id"
+  );
+  await step(
+    "issue card of a job booked without the AI (customer)",
+    200,
+    () => api("GET", `/requests/${clash}/issue-card`, rana),
+    [
+      ["issueCard.aiStatus", null],
+      ["issueCard.diagnosis", null],
+      ["issueCard.isLate", false],
+      ["issueCard.messages.length", 0],
+    ]
   );
   await step("provider quotes the second job", 200, () =>
     api("POST", `/requests/${clash}/quote`, provider, { price: "40.00" })

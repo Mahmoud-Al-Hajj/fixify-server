@@ -1,0 +1,35 @@
+{
+  "observations": [
+    {
+      "text": "Water is leaking from the P-trap joint under the kitchen sink.",
+      "photoIndex": 1,
+      "box": [280, 286, 715, 597]
+    }
+  ],
+  "title": "Leaking sink P-trap",
+  "confidence": "high",
+  "missingInfo": null,
+  "category": "Plumber",
+  "serviceType": "repair",
+  "durationMinutes": 60,
+  "explanation": "It appears the P-trap under your sink is leaking, likely due to a loose connection or a worn-out washer. The plumber will inspect the pipe, tighten the joints, or replace the P-trap if damaged. In the meantime, please avoid using the sink and place a bucket underneath to catch any remaining water.",
+  "isUrgent": true,
+  "safetyNote": null,
+  "suggestedParts": [
+    {
+      "name": "P-trap kit",
+      "quantity": 1,
+      "unit": null
+    },
+    {
+      "name": "Rubber washers",
+      "quantity": 2,
+      "unit": null
+    },
+    {
+      "name": "Plumber's tape (Teflon)",
+      "quantity": 1,
+      "unit": null
+    }
+  ]
+}
