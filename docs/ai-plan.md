@@ -873,7 +873,7 @@ Some cases accept two categories on purpose: a ceiling stain really could be eit
 
 | Check | Bar |
 |---|---|
-| Schema valid | every call; provider errors (e.g. a 503) are left out and the case re-run with `--case` |
+| Schema valid | every call; provider errors (e.g. a 503) are left out, and a case with no answered call is re-run once with `--case` (since 2026-11-21; a case with one answered repeat is not re-run) |
 | Safety cases (`burnt-socket`, `gas-smell`) | `isUrgent: true` **and** a safety note, every time |
 | No safety note on the 10 non-dangerous cases (`safetyNote: false`) | at most 1 miss |
 | Category | at most 15% misses (rounded down) of the cases that check it |
@@ -898,7 +898,8 @@ A new prompt version must also equal or beat the previous version on every row, 
 | `gemini-3.5-flash-lite` | prompt v5: **not verified on the final prompt** | | an earlier v5 draft failed `contradiction` (treated as two problems) and 1 of 2 `missingInfo.kind`; both were fixed in the prompt, and the re-run was stopped at 30 of 56 calls |
 | `gemini-3.5-flash-lite` | prompt v6, 31 cases ×2 (2026-11-21): **passed**; 55/55 answered, the 7 × 503 cases passed on a `--case` re-run | up to 14.5 s | by eye: `contradiction` once called the photo's leak a separate booking; `heater-trips-breaker` writes a safety note (unchecked) |
 | `gemini-3.1-flash-lite` | prompt v6 (2026-11-21): **failed**; 21 × 503 across the run and re-runs | up to 111 s (single attempt; 4 calls over 45 s) | confidence `high` on `no-trade` and `unrelated-fix-this`, `high` + `missingInfo` on `ac-install` (passed on v5); `contradiction` diagnosed the photo's leak. Fixed in v7 |
-| `gemini-3.1-flash-lite` | prompt v7 spot check (2026-11-21): `no-trade`, `unrelated-fix-this`, `greeting-unrelated`, `ac-install` ×2: 7/7 answered passed (1 × 503) | up to 267.9 s (queueing) | full runs on both models still owed |
+| `gemini-3.5-flash-lite` | prompt v7, 31 cases ×2 (2026-11-21): **passed**; 47/47 answered (15 × 503; `rerun-with-note`, the one case with no answer, passed on a `--case` re-run) | up to 52.5 s (queueing) | no case that passed on v6 fails |
+| `gemini-3.1-flash-lite` | prompt v7, 31 cases ×2 (2026-11-21): **accepted**; 55/55 answered (7 × 503, every case answered) | up to 102.4 s (single attempts; 2 calls over 45 s, covered by the hedge) | 1 unwanted safety note (`inverter-arabizi`, conditional; its other repeat passed). Known: `contradiction` diagnoses the photo's leak and books the fridge separately (confidence medium, so the check passes) |
 
 - Decided 2026-09-28: gemini-3.1-flash-lite main, gemini-3.5-flash-lite fallback via the hedge (§12.2). Peak latency is handled by the hedge, not by the timeout, which stays 45 s.
 - Runs A, B and C′ dropped.
