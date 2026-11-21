@@ -25,7 +25,10 @@ import {
   PROMPT_VERSION,
   SYSTEM_INSTRUCTION,
 } from "../src/libraries/ai/diagnosis-prompt";
-import type { Diagnosis } from "../src/libraries/ai/diagnosis-schema";
+import {
+  isDrawableBox,
+  type Diagnosis,
+} from "../src/libraries/ai/diagnosis-schema";
 import {
   diagnose,
   THINKING_LEVELS,
@@ -301,8 +304,22 @@ function runChecks(testCase: DiagnosisCase, d: Diagnosis): Check[] {
           ? d.missingInfo === null
           : true,
   });
+  // v8: a photo observation names a photo that was sent and has a drawable
+  // box; a text observation has neither. Coverage is judged by eye.
+  const photoCount = photosOf(testCase).length;
+  checks.push({
+    name: "boxes",
+    pass: d.observations.every(({ photoIndex, box }) =>
+      photoIndex === null
+        ? box === null
+        : Number.isInteger(photoIndex) &&
+          photoIndex >= 1 &&
+          photoIndex <= photoCount &&
+          isDrawableBox(box)
+    ),
+  });
   const texts = [
-    ...d.observations,
+    ...d.observations.map((o) => o.text),
     d.missingInfo?.ask ?? "",
     d.title,
     d.explanation,
@@ -455,8 +472,8 @@ function evaluatePassBar(calls: CallRecord[], repeat: number): PassBarRow[] {
   const passed = (call: CallRecord, name: string) =>
     call.checks.some((k) => k.name === name && k.pass);
   // A provider error (e.g. a 503) says nothing about the prompt: it is left
-  // out of every row (a row missing calls shows as a partial run) and the
-  // case is re-run with --case.
+  // out of every row (a row missing calls shows as a partial run), and a case
+  // with no answered call is re-run once with --case (§14.6).
   const answered = calls.filter(
     (call) => call.failure?.kind !== DIAGNOSIS_FAILURE.PROVIDER_ERROR
   );
@@ -557,6 +574,11 @@ function evaluatePassBar(calls: CallRecord[], repeat: number): PassBarRow[] {
       "missingInfo kind",
       where((c) => c.expect.missingInfoKind !== undefined),
       (call) => passed(call, "missingInfoKind")
+    ),
+    everyCall(
+      "boxes: on a sent photo and drawable",
+      calls.filter((call) => call.diagnosis !== null),
+      (call) => passed(call, "boxes")
     ),
     everyCall(
       "unrelated input: category null",

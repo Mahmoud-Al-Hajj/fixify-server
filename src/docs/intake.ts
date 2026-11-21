@@ -62,7 +62,11 @@ sameShape<z.output<typeof messageView>, ReturnType<typeof toMessageView>>(true);
 // What a finished diagnosis looks like; the test parses it with
 // diagnosisView.
 export const DIAGNOSIS_EXAMPLE = {
-  observations: ["Water is dripping from the trap under the sink."],
+  observations: [
+    "Water is dripping from the trap under the sink.",
+    "The leak started this morning.",
+  ],
+  observationPhotos: [{ photoId: 41, box: [310, 285, 720, 610] }, null],
   title: "Leaking sink trap",
   confidence: "high",
   missingInfo: null,
@@ -85,6 +89,22 @@ export const diagnosisView = storedDiagnosisFieldsSchema
       description:
         "Facts the customer stated or the photos show. Empty for a diagnosis made before prompt v5.",
     }),
+    observationPhotos: documented(
+      z
+        .array(
+          z
+            .object({
+              photoId: z.number().int(),
+              box: z.tuple([z.number(), z.number(), z.number(), z.number()]),
+            })
+            .nullable()
+        )
+        .max(4),
+      {
+        description:
+          "Same length and order as observations. For an observation seen in a photo: photoId, the intake photo (an id from the session's messages), and box, [ymin, xmin, ymax, xmax] on a 0-1000 scale of that photo, origin top-left. null for a fact from the text or a box that cannot be drawn; every entry is null for a diagnosis made before prompt v8.",
+      }
+    ),
     missingInfo: documented(
       z
         .object({ kind: z.enum(MISSING_INFO_KINDS), ask: z.string() })

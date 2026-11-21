@@ -7,7 +7,9 @@ import {
   aiMessageBody,
   DIAGNOSIS_JSON_SCHEMA,
   diagnosisSchema,
+  observationPhotos,
   storedDiagnosisFieldsSchema,
+  storedDiagnosisSchema,
   type Diagnosis,
 } from "./diagnosis-schema";
 
@@ -90,9 +92,33 @@ function sample(name: string): unknown {
   );
 }
 
-test("diagnosisSchema accepts a real v5 Gemini response", () => {
-  const result = diagnosisSchema.safeParse(sample("sample-response-v5.json"));
+test("diagnosisSchema accepts a real v8 Gemini response", () => {
+  const result = diagnosisSchema.safeParse(sample("sample-response-v8.json"));
   if (!result.success) assert.fail(result.error.message);
+  assert.ok(result.data.observations.some((o) => o.box !== null));
+});
+
+test("a stored v5 diagnosis still reads, its observations as text with no photo", () => {
+  const raw = sample("sample-response-v5.json");
+  assert.equal(diagnosisSchema.safeParse(raw).success, false);
+  const result = storedDiagnosisFieldsSchema.safeParse(raw);
+  if (!result.success) assert.fail(result.error.message);
+  assert.deepEqual(result.data.observations[0], {
+    text: "Water is leaking from the P-trap assembly under the kitchen sink.",
+    photoIndex: null,
+    box: null,
+  });
+});
+
+test("a stored diagnosis from before v8 reads with no photo ids", () => {
+  const result = storedDiagnosisSchema.safeParse({
+    model: "gemini-3.1-flash-lite",
+    promptVersion: 7,
+    completedAt: "2026-11-21T10:00:00.000",
+    diagnosis: sample("sample-response-v5.json"),
+  });
+  if (!result.success) assert.fail(result.error.message);
+  assert.deepEqual(result.data.photoIds, []);
 });
 
 test("a stored v4 diagnosis still reads, with no observations or missing info", () => {
@@ -105,7 +131,9 @@ test("a stored v4 diagnosis still reads, with no observations or missing info", 
 });
 
 const VALID: Diagnosis = {
-  observations: ["Water drips from the trap."],
+  observations: [
+    { text: "Water drips from the trap.", photoIndex: null, box: null },
+  ],
   title: "Leaking sink trap",
   confidence: "low",
   missingInfo: { kind: "photo", ask: "A photo of the trap would help." },
@@ -121,13 +149,64 @@ const VALID: Diagnosis = {
 test("a new diagnosis needs 1 to 4 observations", () => {
   assert.ok(diagnosisSchema.safeParse(VALID).success);
   for (const count of [0, 5]) {
-    const observations = Array.from({ length: count }, () => "A fact.");
+    const observations = Array.from({ length: count }, () => ({
+      text: "A fact.",
+      photoIndex: null,
+      box: null,
+    }));
     assert.equal(
       diagnosisSchema.safeParse({ ...VALID, observations }).success,
       false,
       `${count} observations`
     );
   }
+});
+
+const seen = (photoIndex: number | null, box: number[] | null) => ({
+  text: "A fact.",
+  photoIndex,
+  box,
+});
+
+test("an observation's photoIndex reads as the id of the photo sent", () => {
+  assert.deepEqual(
+    observationPhotos([seen(2, [10, 20, 300, 400]), seen(null, null)], [7, 9]),
+    [{ photoId: 9, box: [10, 20, 300, 400] }, null]
+  );
+});
+
+test("an index that names no sent photo reads as null", () => {
+  for (const photoIndex of [0, 3, 1.5]) {
+    assert.deepEqual(
+      observationPhotos([seen(photoIndex, [10, 20, 300, 400])], [7, 9]),
+      [null],
+      `photoIndex ${photoIndex}`
+    );
+  }
+});
+
+test("a box that cannot be drawn reads as null", () => {
+  const bad = [
+    [300, 20, 10, 400], // ymin > ymax
+    [10, 400, 300, 20], // xmin > xmax
+    [10, 20, 300, 1001], // out of range
+    [10, 20, 300], // three numbers
+    [10.5, 20, 300, 400], // not an integer
+    null,
+  ];
+  for (const box of bad) {
+    assert.deepEqual(
+      observationPhotos([seen(1, box)], [7]),
+      [null],
+      JSON.stringify(box)
+    );
+  }
+});
+
+test("a box on a text observation reads as null", () => {
+  assert.deepEqual(observationPhotos([seen(null, [10, 20, 300, 400])], [7]), [
+    null,
+  ]);
 });
 
 test("the AI message appends what would help, when there is something", () => {

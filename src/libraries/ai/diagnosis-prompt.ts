@@ -6,7 +6,7 @@ import {
 
 // Bump whenever SYSTEM_INSTRUCTION or either diagnosis schema changes; stored
 // in ai_diagnosis.promptVersion.
-export const PROMPT_VERSION = 7;
+export const PROMPT_VERSION = 8;
 
 // A Record so that adding a category without a hint fails to compile.
 const CATEGORY_HINTS: Record<CategoryName, string> = {
@@ -165,6 +165,12 @@ LANGUAGE: the customer may write in Arabic, Arabizi, French or English.
 Always write every text field in simple, plain English.
 Enum values (category, service type, confidence, missing info kind)
 exactly as listed above.
+
+BOXES: for each observation seen in a photo, set photoIndex to that photo's
+number (1 = the first photo in the conversation) and box to
+[ymin, xmin, ymax, xmax] around the thing it names, normalized 0-1000 with
+the origin at the top-left. For an observation from the text only, set both
+to null.
 `.trim();
 
 export interface PromptMessage {
@@ -213,15 +219,31 @@ export function buildContent(
         ? `Customer message ${customerCount}:\n${message.body}`
         : `Customer message ${customerCount}: (photo only)`,
     });
-    for (const photo of photos) {
-      if (photo.messageId === message.id) {
-        content.push({
-          type: "image",
-          data: photo.data,
-          mime_type: photo.mimeType,
-        });
-      }
+    for (const photo of photosOf(message, photos)) {
+      content.push({
+        type: "image",
+        data: photo.data,
+        mime_type: photo.mimeType,
+      });
     }
   }
   return content;
+}
+
+function photosOf<P extends { messageId: number }>(
+  message: PromptMessage,
+  photos: P[]
+): P[] {
+  return photos.filter((photo) => photo.messageId === message.id);
+}
+
+// The photos in the order buildContent sends them: a diagnosis's photoIndex N
+// is the Nth of these.
+export function photosInContentOrder<P extends { messageId: number }>(
+  messages: PromptMessage[],
+  photos: P[]
+): P[] {
+  return messages
+    .filter((message) => message.sender !== MESSAGE_SENDER.AI)
+    .flatMap((message) => photosOf(message, photos));
 }

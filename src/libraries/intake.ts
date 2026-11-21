@@ -24,7 +24,13 @@ import {
   ERROR_CODE,
 } from "../constants/errors";
 import { logger } from "../config/logger";
-import { storedDiagnosisSchema, type Diagnosis } from "./ai/diagnosis-schema";
+import {
+  observationPhotos,
+  storedDiagnosisSchema,
+  type Diagnosis,
+  type ObservationPhoto,
+  type StoredDiagnosis,
+} from "./ai/diagnosis-schema";
 import {
   photoFilePath,
   removePhotos,
@@ -161,36 +167,49 @@ export async function getOwnSession(
   diagnosis: DiagnosisView | null;
 }> {
   const session = await loadOwnSession(sessionId, customerId);
-  const diagnosis = currentDiagnosis(session);
+  const stored = currentStoredDiagnosis(session);
   return {
     session,
     messages: await listIntakeMessages(sessionId),
-    diagnosis: diagnosis === null ? null : await toDiagnosisView(diagnosis),
+    diagnosis: stored === null ? null : await toDiagnosisView(stored),
   };
 }
 
 // The diagnosis as the API returns it: the validated output, never edited,
 // plus the id of its category, resolved by the server from the name so the
-// client never maps names to ids. Response only; nothing stores it.
-export type DiagnosisView = Diagnosis & { categoryId: number | null };
+// client never maps names to ids. observations stays plain text, as before
+// v8, so installed clients keep working; observationPhotos, the same length
+// and order, says which intake photo each one is seen in and where.
+// Response only; nothing stores it.
+export type DiagnosisView = Omit<Diagnosis, "observations"> & {
+  observations: string[];
+  observationPhotos: (ObservationPhoto | null)[];
+  categoryId: number | null;
+};
 
-export async function toDiagnosisView(
-  diagnosis: Diagnosis
-): Promise<DiagnosisView> {
-  if (diagnosis.category === null) return { ...diagnosis, categoryId: null };
+export async function toDiagnosisView({
+  diagnosis,
+  photoIds,
+}: Pick<StoredDiagnosis, "diagnosis" | "photoIds">): Promise<DiagnosisView> {
+  const view = {
+    ...diagnosis,
+    observations: diagnosis.observations.map((o) => o.text),
+    observationPhotos: observationPhotos(diagnosis.observations, photoIds),
+  };
+  if (diagnosis.category === null) return { ...view, categoryId: null };
   const categoryId = await findCategoryIdByName(diagnosis.category);
   if (categoryId === null) {
     // assertCategoriesMatchConstants guarantees a row for every name.
     throw new Error("A diagnosed category has no row in categories");
   }
-  return { ...diagnosis, categoryId };
+  return { ...view, categoryId };
 }
 
 // A stored value that no longer matches the schema (e.g. an earlier prompt
 // version's shape) is logged and treated as no diagnosis.
-export function currentDiagnosis(
+export function currentStoredDiagnosis(
   session: Pick<IntakeSession, "id" | "aiStatus" | "aiDiagnosis">
-): Diagnosis | null {
+): StoredDiagnosis | null {
   if (session.aiStatus !== AI_STATUS.DONE) return null;
   const stored = storedDiagnosisSchema.safeParse(session.aiDiagnosis);
   if (!stored.success) {
@@ -200,7 +219,13 @@ export function currentDiagnosis(
     });
     return null;
   }
-  return stored.data.diagnosis;
+  return stored.data;
+}
+
+export function currentDiagnosis(
+  session: Pick<IntakeSession, "id" | "aiStatus" | "aiDiagnosis">
+): Diagnosis | null {
+  return currentStoredDiagnosis(session)?.diagnosis ?? null;
 }
 
 // Readable by the session's customer, or by the provider assigned to the

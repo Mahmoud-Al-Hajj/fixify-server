@@ -32,7 +32,9 @@ async function advance(ms: number): Promise<void> {
 const resultFrom = (model: string): DiagnosisResult => ({
   model,
   diagnosis: {
-    observations: ["Water under the sink"],
+    observations: [
+      { text: "Water under the sink", photoIndex: null, box: null },
+    ],
     title: "Likely worn seal",
     confidence: "medium",
     missingInfo: null,

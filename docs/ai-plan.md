@@ -145,7 +145,7 @@ Two layers: Gemini structured output (a hand-written JSON Schema passed with the
 
 | Field | Type | Used for |
 |---|---|---|
-| `observations` | 1–4 × string ≤ 150, first in the schema | what the customer said or the photos show; never guessed (v5) |
+| `observations` | 1–4 × `{ text ≤ 150, photoIndex, box }`, first in the schema | what the customer said or the photos show; never guessed (v5). v8: `photoIndex` (1 = the first image sent) and `box` (`[ymin, xmin, ymax, xmax]`, 0–1000, origin top-left) for a fact seen in a photo, both `null` for a fact from the text |
 | `title` | string ≤ 120 (prompt asks for under 80) | headline, e.g. "Likely P-trap leak" |
 | `confidence` | `low` / `medium` / `high` | how sure the diagnosis is |
 | `missingInfo` | `{ kind: photo | detail, ask ≤ 100 }` or `null` | the photo or detail that would help; the prompt asks for it on `low`, allows it on `medium`, `null` on `high`. zod checks only the shape; the rule is a replay check (§14.5). `ask` is appended to the AI message (v5) |
@@ -205,6 +205,8 @@ export const diagnosisSchema = z.object({
 export type Diagnosis = z.infer<typeof diagnosisSchema>;
 ```
 
+v8 makes each observation `{ text, photoIndex, box }`. zod checks only its shape: an index that names no sent photo, or a box that is out of range or out of order, never fails a diagnosis; the API shows it as `null` (`observationPhotos`). The API keeps `observations` as `string[]` (the texts) so installed clients keep working, and adds `observationPhotos`, the same length and order, each `{ photoId, box }` (`photoId` = the `intake_photos` id) or `null`. Stored v5–v7 observations (plain strings) read as text with no photo.
+
 v5 adds `observations` (first key) and `missingInfo` to `diagnosisSchema`, which is what the model must return. Stored diagnoses are read with `storedDiagnosisFieldsSchema`, the same schema with `observations` defaulting to `[]` and `missingInfo` to `null`, so a v4 diagnosis still reads (on the session, the issue card and at booking) and every response has one shape. The stored JSON is never rewritten.
 
 - Don't use `.strict()`: unknown keys are dropped, not treated as failures.
@@ -216,9 +218,9 @@ v5 adds `observations` (first key) and `missingInfo` to `diagnosisSchema`, which
 
 - `ai_diagnosis` on success:
   ```json
-  { "model": "<the model that answered, after the hedge>", "promptVersion": <PROMPT_VERSION, now 7>, "completedAt": "<Beirut wall clock>", "diagnosis": { } }
+  { "model": "<the model that answered, after the hedge>", "promptVersion": <PROMPT_VERSION, now 8>, "completedAt": "<Beirut wall clock>", "photoIds": [<intake_photos ids>], "diagnosis": { } }
   ```
-  The stored diagnosis is the model's output after validation. Values are never edited. `completedAt` is set by `markDone`; it is an audit field and no longer decides lateness (§13.4).
+  `photoIds` (v8) are the photos the call sent, in the order the model saw them (`photosInContentOrder`, the same order as `buildContent`), so `photoIndex` N reads back as `photoIds[N - 1]` even after more photos are added; `[]` when read from an older diagnosis. The stored diagnosis is the model's output after validation. Values are never edited. `completedAt` is set by `markDone`; it is an audit field and no longer decides lateness (§13.4).
 - On failure `ai_diagnosis` is left unchanged (`NULL` on a first attempt, the previous diagnosis after a failed re-run); GET and booking use it only when `ai_status` is `done`. The raw output goes to the winston log. (The JSON column would reject invalid output anyway.)
 - **A successful re-run overwrites `ai_diagnosis`.** Earlier runs survive only as their AI messages (the explanation text).
 
@@ -238,16 +240,18 @@ v5 adds `observations` (first key) and `missingInfo` to `diagnosisSchema`, which
 - **The JSON Schema is written by hand, not generated from zod.** It uses only keywords in Gemini's subset (`type`, `enum`, `minimum`/`maximum`, `maxItems`, `required`, `description`), with a `description` on each field. Nullable fields use `"type": ["string", "null"]`. A zod-to-JSON converter can emit unsupported keywords, and overly complex schemas may be rejected.
 - **A unit test** checks that `DIAGNOSIS_JSON_SCHEMA` and `diagnosisSchema` have the same field names, the same required fields and the same enum values, so they can't drift apart.
 
-### 4.2 System instruction (v7)
+### 4.2 System instruction (v8)
 
 v5 (2026-11-20) adds observations and missing info, a glossary of Lebanese terms, tie-breaks (damp stain, window material, generator vs house wiring), a multiple-problems rule, and one safety-note sentence (a step that only limits water damage is never a safety note). A photo that shows something other than the text is a contradiction, not a second problem. `missingInfo.kind` is photo for anything a photo would show. The photo hint left the explanation for `missingInfo`.
 
 v6 (2026-11-20) adds unrelated input: a home problem in the text with an unrelated photo is diagnosed from the text (an observation says the photo doesn't show it, confidence not high, missing info asks for a photo); nothing that is a home problem gives category null, confidence low, not urgent, no safety note, no parts, a polite explanation and a missing-info detail asking what they need help with; observations never describe a fault no photo shows and the customer didn't state. It also adds the water-heater tie-break: leaking at the tank or a valve is Plumber; not heating, tripping the breaker, or a burnt cable or plug is Electrician (the Plumber hint now says "water heater leaks").
 v7 (2026-11-21) fixes what the v6 run on 3.1 Flash-Lite got wrong: it gave `high` confidence on input that is not a home problem ("sure it isn't one") and `high` with a missing-info question on `ac-install`. Confidence is now stated to be about a problem at home (low when there is none, however sure), and anything still worth asking means confidence is not high.
 
+v8 (2026-11-21) adds BOXES at the end of the prompt, word for word the instruction the box spike tested (2026-11-21, `box-spike-2026-11-21T12-28-32-782Z`: the box covered the named thing on about 84% of photo observations on 3.1 Flash-Lite and 87% on 3.5, every coordinate valid; output + thought +19% and +27%).
+
 ```ts
 // src/libraries/ai/diagnosis-prompt.ts
-export const PROMPT_VERSION = 7;
+export const PROMPT_VERSION = 8;
 
 export const SYSTEM_INSTRUCTION = `
 You are the intake assistant for Fixify, a home-services app in Lebanon.
@@ -392,6 +396,12 @@ LANGUAGE: the customer may write in Arabic, Arabizi, French or English.
 Always write every text field in simple, plain English.
 Enum values (category, service type, confidence, missing info kind)
 exactly as listed above.
+
+BOXES: for each observation seen in a photo, set photoIndex to that photo's
+number (1 = the first photo in the conversation) and box to
+[ymin, xmin, ymax, xmax] around the thing it names, normalized 0-1000 with
+the origin at the top-left. For an observation from the text only, set both
+to null.
 `.trim();
 ```
 
@@ -759,6 +769,7 @@ fixtures/diagnosis/
   photos/*.jpg        ~11 test photos, pre-compressed                  (committed)
   sample-response-v4.json  a real v4 response (read-compatibility test) (committed)
   sample-response-v5.json  a real v5 response from a 3.1 Flash-Lite run (committed)
+  sample-response-v8.json  a real v8 response with a box, 3.1 Flash-Lite (committed)
   runs/               one JSON file per replay run                     (gitignored)
 scripts/replay-diagnosis.ts
 ```
@@ -860,6 +871,7 @@ Some cases accept two categories on purpose: a ceiling stain really could be eit
 - injection case: title doesn't contain "HACKED"
 - `missingInfo` set when confidence is `low` and `null` when `high`, every call; `missingInfo.kind` where a case asks for it (v5). `observations` non-empty is part of zod.
 - the English check also covers `observations` and `missingInfo.ask`
+- boxes (v8), every call: an observation with a `photoIndex` names a photo the case sent and has a drawable box (4 integers 0–1000, ymin < ymax, xmin < xmax); one without has no box
 
 **By eye**, reading the run file:
 - explanation plain and sensible; no prices; no do-it-yourself repair steps
@@ -868,6 +880,7 @@ Some cases accept two categories on purpose: a ceiling stain really could be eit
 - the contradiction case mentions the mismatch
 - leak cases mention a damage-limiting step in the explanation
 - no observation that isn't in the input (v5); for an unrelated photo, observations describe what it actually shows, never a fault (v6)
+- the box covers the thing its observation names (v8): drawn over each photo and checked on a contact sheet
 
 ### 14.6 Pass bar (before building the endpoint)
 
@@ -882,6 +895,8 @@ Some cases accept two categories on purpose: a ceiling stain really could be eit
 | Latency | slowest call well under 45 s; revisit the timeout or thinking level above ~30 s |
 | `missingInfo` rule and kind (v5) | every call |
 | Unrelated input (`unrelated-fix-this`, `greeting-unrelated`): category `null` (v6) | every call |
+| Boxes on a sent photo and drawable (v8) | every call |
+| Box covers the named thing, by eye (v8) | at least 80% of photo observations |
 
 A new prompt version must also equal or beat the previous version on every row, and not fail any case that passed in the previous version's run on that model.
 
@@ -899,6 +914,8 @@ A new prompt version must also equal or beat the previous version on every row, 
 | `gemini-3.5-flash-lite` | prompt v6, 31 cases ×2 (2026-11-21): **passed**; 55/55 answered, the 7 × 503 cases passed on a `--case` re-run | up to 14.5 s | by eye: `contradiction` once called the photo's leak a separate booking; `heater-trips-breaker` writes a safety note (unchecked) |
 | `gemini-3.1-flash-lite` | prompt v6 (2026-11-21): **failed**; 21 × 503 across the run and re-runs | up to 111 s (single attempt; 4 calls over 45 s) | confidence `high` on `no-trade` and `unrelated-fix-this`, `high` + `missingInfo` on `ac-install` (passed on v5); `contradiction` diagnosed the photo's leak. Fixed in v7 |
 | `gemini-3.5-flash-lite` | prompt v7, 31 cases ×2 (2026-11-21): **passed**; 47/47 answered (15 × 503; `rerun-with-note`, the one case with no answer, passed on a `--case` re-run) | up to 52.5 s (queueing) | no case that passed on v6 fails |
+| `gemini-3.5-flash-lite` | prompt v8, 31 cases ×2 (2026-11-21): **passed**; 52/52 answered (10 × 503, every case answered), boxes drawable 52/52 | up to 10.6 s | box covers the named thing on about 85% by eye (misses: whole-photo box on the spraying pipe, one earbud of two) |
+| `gemini-3.1-flash-lite` | prompt v8, 31 cases ×2 (2026-11-21): **accepted**; 45/45 answered plus 3 `--case` re-runs (17 × 503; `plumber-sink-leak` answered in the first v8 call) | up to 254.2 s (queueing) | 1 `missingInfo` miss (`washer-arabic`, high with a detail ask; its other repeat passed); 1 box miss (`unrelated-fix-this`, a photo index with no box, served as `null`); box covers the named thing on about 92% by eye (misses: the floor crack's lower end) |
 | `gemini-3.1-flash-lite` | prompt v7, 31 cases ×2 (2026-11-21): **accepted**; 55/55 answered (7 × 503, every case answered) | up to 102.4 s (single attempts; 2 calls over 45 s, covered by the hedge) | 1 unwanted safety note (`inverter-arabizi`, conditional; its other repeat passed). Known: `contradiction` diagnoses the photo's leak and books the fridge separately (confidence medium, so the check passes) |
 
 - Decided 2026-09-28: gemini-3.1-flash-lite main, gemini-3.5-flash-lite fallback via the hedge (§12.2). Peak latency is handled by the hedge, not by the timeout, which stays 45 s.
@@ -912,7 +929,7 @@ A new prompt version must also equal or beat the previous version on every row, 
 
 ### 14.8 Unit tests
 
-Unchanged (`buildContent`, schema agreement, `deriveBookingFields`, `buildDescription`), plus: `diagnosisSchema` parses `sample-response-v5.json`, a real response saved from a 3.1 Flash-Lite run; the read schema still accepts `sample-response-v4.json`; `aiMessageBody`. No live call; it catches a zod change that would reject real Gemini output.
+Unchanged (`buildContent`, schema agreement, `deriveBookingFields`, `buildDescription`), plus: `diagnosisSchema` parses `sample-response-v8.json`, a real response saved from a 3.1 Flash-Lite run; the read schema still accepts `sample-response-v4.json` and `sample-response-v5.json` (string observations); `aiMessageBody`; `observationPhotos` (index to photo id, out-of-range index, undrawable box, box on a text fact); `photosInContentOrder` matches `buildContent`'s image order. No live call; it catches a zod change that would reject real Gemini output.
 
 ---
 

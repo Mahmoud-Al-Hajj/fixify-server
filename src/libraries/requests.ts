@@ -80,6 +80,7 @@ import {
 import { assertRequestTransition } from "./request-state-machine";
 import {
   currentDiagnosis,
+  currentStoredDiagnosis,
   toDiagnosisView,
   type DiagnosisView,
 } from "./intake";
@@ -406,13 +407,13 @@ export async function getIssueCard(
   if (!session) {
     throw new Error("A request's intake session could not be read");
   }
-  const diagnosis = currentDiagnosis(session);
+  const stored = currentStoredDiagnosis(session);
   return {
     request,
     aiStatus: session.aiStatus,
-    diagnosis: diagnosis === null ? null : await toDiagnosisView(diagnosis),
+    diagnosis: stored === null ? null : await toDiagnosisView(stored),
     isLate:
-      diagnosis !== null &&
+      stored !== null &&
       (await findAiStatusAtBooking(request.id)) === AI_STATUS.PENDING,
     messages: await listIntakeMessages(session.id),
     items,
