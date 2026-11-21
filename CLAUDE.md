@@ -686,8 +686,8 @@ by default.
 ## Working rules
 
 - Prompt and model work is frozen at v8: no prompt changes or replay runs unless something breaks.
-- `docs/ai-plan.md` is the only plan. Doc fixes ride along with the next feature commit;
-  no docs-only commits.
+- `docs/ai-plan.md` is the only plan. Doc changes are their own `docs:` commit (see
+  "Commits").
 - Estimate and stop for approval only for steps over ~100 lines. Smaller changes: build,
   show the diff, commit.
 - Before claiming something exists or is done, prove it in the report with quoted output:
@@ -700,6 +700,24 @@ by default.
 
 - Never create, switch, merge or delete git branches unless the user explicitly asks in
   that message. Work on the current branch and report which one it is.
+
+### Commits
+
+From Fowler's "two hats", Beck's *Tidy First?* and Google's small-CL guidance. The
+reasoning and sources: https://claude.ai/artifact/5L2qtXbGK8Jy1HFYfoo6WZ
+
+- **One hat per commit.** `refactor:` changes structure only, with tests and smoke green
+  before and after. `fix:` / `feat:` changes behaviour, and the message says what a client
+  will notice. `docs:` changes documents only. Never mix them. When a task needs both, the
+  refactor lands first in its own commit ("make the change easy, then make the easy
+  change").
+- **Small commits.** Aim for about 300 changed lines or fewer. A pure move or rename may be
+  larger, and its message says it is one.
+- **Judge a refactor by change, not by line count.** Does a typical change now touch one
+  module? Is each new interface simpler than what it hides? A split adds imports and
+  headers; report moved lines and net lines separately.
+- **No wrapper unless it hides something.** A helper, wrapper or module must hide a rule, a
+  query or an ordering, or serve a second real caller. Nothing that only forwards a call.
 
 ---
 
