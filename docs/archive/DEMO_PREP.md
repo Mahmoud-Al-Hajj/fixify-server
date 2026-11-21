@@ -1,3 +1,5 @@
+> **Archived.** Kept for the record and not kept up to date; see `docs/archive/README.md`.
+
 # Fixify API: supervisor demo prep
 
 Branch `dev` at `39a4cb5` (adds the in-memory diagnosis cache). All `file:line`

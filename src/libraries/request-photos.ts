@@ -22,7 +22,7 @@ import {
   REQUEST_STATUS,
   type RequestStatus,
 } from "../constants/request-status";
-import { loadRequestForActor } from "./requests";
+import { loadRequestForActor } from "./request-access";
 import {
   photoFilePath,
   removePhotos,

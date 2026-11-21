@@ -15,7 +15,7 @@ import { VISIT_STATUS } from "../constants/visit-status";
 import type { toMessageView } from "../controllers/intake";
 import type { toRequestPhotoView } from "../controllers/requests";
 import { MAX_PHOTOS_PER_REQUEST } from "../libraries/request-photos";
-import type { IssueCard } from "../libraries/requests";
+import type { IssueCard } from "../libraries/request-reads";
 import { MAX_PHOTOS } from "../middlewares/upload";
 import type { RequestItem } from "../models-db/request-items";
 import type { NamedRequest, Request } from "../models-db/requests";

@@ -3,7 +3,7 @@ import path from "node:path";
 import { env } from "../config/env";
 import { logger } from "../config/logger";
 import { withTransaction } from "../models-db/pool";
-import { beirutNow } from "../models-db/format-datetime";
+import { beirutNow, formatWallClock } from "../models-db/format-datetime";
 import {
   findIntakeSession,
   insertIntakeMessage,
@@ -142,7 +142,7 @@ async function runAnalysis(
     const stored: StoredDiagnosis = {
       model: result.model,
       promptVersion: PROMPT_VERSION,
-      completedAt: beirutNow().toISOString().slice(0, 23),
+      completedAt: formatWallClock(beirutNow()),
       photoIds: input.photoIds,
       diagnosis: result.diagnosis,
     };

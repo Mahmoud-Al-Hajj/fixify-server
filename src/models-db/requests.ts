@@ -322,10 +322,10 @@ export async function updateQuoteState(
   return result.affectedRows === 1;
 }
 
-// A revision move on an in-progress job. applyRevision copies revised_price
-// into price (the customer accepted it) before revised_price is overwritten;
-// single-table SET assignments run left to right. Same optimistic guard as
-// updateQuoteState: false when the row no longer matches.
+// A revision move on an in-progress job. copyRevisionToPrice copies
+// revised_price into price (the customer accepted it) before revised_price is
+// overwritten; single-table SET assignments run left to right. Same
+// optimistic guard as updateQuoteState: false when the row no longer matches.
 export async function updateRevisedQuote(
   conn: PoolConnection,
   input: {
@@ -335,7 +335,7 @@ export async function updateRevisedQuote(
     toPriceStatus: PriceStatus;
     fromRevisedPrice: string | null;
     newRevisedPrice: string | null;
-    applyRevision: boolean;
+    copyRevisionToPrice: boolean;
   }
 ): Promise<boolean> {
   const [result] = await conn.query<ResultSetHeader>(
@@ -344,7 +344,7 @@ export async function updateRevisedQuote(
      WHERE id = ? AND status = ? AND price_status = ? AND revised_price <=> ?`,
     [
       input.toPriceStatus,
-      input.applyRevision,
+      input.copyRevisionToPrice,
       input.newRevisedPrice,
       input.id,
       input.status,

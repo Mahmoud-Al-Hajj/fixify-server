@@ -1,5 +1,5 @@
 import { env } from "../config/env";
-import { beirutNow } from "../models-db/format-datetime";
+import { beirutNow, formatWallClock } from "../models-db/format-datetime";
 import { REQUEST_ACTOR_ROLE } from "../constants/request-status";
 
 // The demo accounts appear only outside production: the production docs are
@@ -82,7 +82,7 @@ export function demoStart(nth: number): string {
       )
     );
     if (TONY_WORKDAYS.includes(day.getUTCDay()) && ++found === nth) {
-      return day.toISOString().slice(0, 23);
+      return formatWallClock(day);
     }
   }
 }

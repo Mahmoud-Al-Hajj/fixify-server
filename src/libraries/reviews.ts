@@ -9,7 +9,7 @@ import { insertJobEvent } from "../models-db/job-events";
 import { JOB_EVENT_TYPE } from "../constants/job-event-type";
 import { ForbiddenError } from "../constants/errors";
 import { REQUEST_ACTOR_ROLE } from "../constants/request-status";
-import { loadRequestForActor } from "./requests";
+import { loadRequestForActor } from "./request-access";
 
 export interface CreateReviewInput {
   rating: number;

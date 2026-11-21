@@ -50,23 +50,29 @@ export function errorHandler(
     err.status >= 400 &&
     err.status < 500
   ) {
-    const tooLarge = err.status === 413;
-    res.status(err.status).json({
-      error: {
-        code: tooLarge ? ERROR_CODE.PAYLOAD_TOO_LARGE : "VALIDATION_FAILED",
-        message: tooLarge ? "Request body too large" : "Malformed request body",
-      },
-    });
+    // A malformed body answers like any other ValidationError (same code).
+    const error =
+      err.status === 413
+        ? {
+            code: ERROR_CODE.PAYLOAD_TOO_LARGE,
+            message: "Request body too large",
+          }
+        : new ValidationError("Malformed request body");
+    res
+      .status(err.status)
+      .json({ error: { code: error.code, message: error.message } });
     return;
   }
 
-  // Unexpected — always log server-side, never leak details to the client
+  // Unexpected: logged with its stack so the failing line can be found; the
+  // client only ever sees the generic message.
   logger.error("unhandled error", {
     requestId: req.id,
     userId: req.user?.id,
     method: req.method,
     path: req.originalUrl,
     error: err instanceof Error ? err.message : String(err),
+    stack: err instanceof Error ? err.stack : undefined,
   });
   res.status(500).json({
     error: { code: ERROR_CODE.INTERNAL_ERROR, message: "Something went wrong" },

@@ -3,6 +3,7 @@ import { SERVICE_TYPE } from "../constants/service-type";
 import { REQUEST_ACTOR_ROLE } from "../constants/request-status";
 import { PHOTO_KIND } from "../constants/photo-kind";
 import { PIN_BOUNDS } from "../constants/booking";
+import { formatWallClock } from "../models-db/format-datetime";
 
 export const LOCAL_DATETIME =
   /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{3})?)?$/;
@@ -37,7 +38,7 @@ export const localDateTime = z.string().transform((value, ctx) => {
     );
     // The round-trip rejects values Date.UTC silently rolls over (Feb 30,
     // 24:00) or remaps (years 0-99); 1000 is the DATETIME lower bound.
-    if (year >= 1000 && date.toISOString().slice(0, 23) === full) {
+    if (year >= 1000 && formatWallClock(date) === full) {
       return date;
     }
   }

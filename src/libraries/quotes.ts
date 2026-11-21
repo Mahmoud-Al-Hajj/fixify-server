@@ -29,11 +29,28 @@ import {
   loadRequestForActor,
   rereadRequest,
   CHANGED_CONCURRENTLY_MESSAGE,
-} from "./requests";
+} from "./request-access";
 
-// role is who may take the action at all (checked before any state, so a
-// wrong role is always 403). targetFor picks the price_status it moves to. While in progress, a
-// move to accepted answers a revision, whether it is accepted or declined.
+// Quotes, in two modes that share these three endpoints (propose, accept,
+// decline). Quote state lives in requests.price_status, never in the job
+// status.
+//
+// - Before the job (pending): the provider proposes a price; the customer
+//   accepts it, which schedules the job and books its first visit
+//   (reserveSlot), or declines it.
+// - During the job (in_progress): the provider proposes a revised price with
+//   a reason. It waits in revised_price while price keeps the agreed amount.
+//   Accepting copies it into price; declining drops it. Either way
+//   price_status returns to accepted.
+//
+// The allowed moves are quote-rules.ts; the job's own transitions are
+// request-state-machine.ts.
+
+// Loads the request and checks the move before anything is written. role is
+// who may take the action at all, checked first so a wrong role is always a
+// 403. targetFor gives the price_status the action moves to; while the job is
+// in progress, answering a revision moves back to accepted whether the
+// customer accepted or declined it.
 async function loadForQuoteAction(
   requestId: string,
   actorUserId: string,
@@ -88,7 +105,7 @@ async function applyRevision(
   change: {
     toPriceStatus: PriceStatus;
     newRevisedPrice: string | null;
-    applyRevision: boolean;
+    copyRevisionToPrice: boolean;
   }
 ): Promise<void> {
   const updated = await updateRevisedQuote(conn, {
@@ -145,7 +162,7 @@ export async function proposeQuote(
       await applyRevision(conn, request, {
         toPriceStatus: PRICE_STATUS.PROPOSED,
         newRevisedPrice: price,
-        applyRevision: false,
+        copyRevisionToPrice: false,
       });
     }
     await insertJobEvent(conn, {
@@ -191,7 +208,7 @@ export async function declineQuote(
       await applyRevision(conn, request, {
         toPriceStatus: PRICE_STATUS.ACCEPTED,
         newRevisedPrice: null,
-        applyRevision: false,
+        copyRevisionToPrice: false,
       });
     }
     await insertJobEvent(conn, {
@@ -223,7 +240,7 @@ export async function acceptQuote(
       await applyRevision(conn, request, {
         toPriceStatus: PRICE_STATUS.ACCEPTED,
         newRevisedPrice: null,
-        applyRevision: true,
+        copyRevisionToPrice: true,
       });
       await insertJobEvent(conn, {
         id: randomUUID(),

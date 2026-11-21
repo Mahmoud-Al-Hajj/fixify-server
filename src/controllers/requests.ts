@@ -1,5 +1,8 @@
 import type { Request, Response, NextFunction } from "express";
 import * as requestsService from "../libraries/requests";
+import * as requestBookingService from "../libraries/request-booking";
+import * as requestReadsService from "../libraries/request-reads";
+import * as requestItemsService from "../libraries/request-items";
 import * as quotesService from "../libraries/quotes";
 import * as reviewsService from "../libraries/reviews";
 import * as visitsService from "../libraries/visits";
@@ -38,11 +41,11 @@ export async function createRequestHandler(
   // Only the search shape has a description (routes/requests.schema.ts).
   const request =
     "description" in body
-      ? await requestsService.createRequest({
+      ? await requestBookingService.createRequest({
           customerId: customer.id,
           ...body,
         })
-      : await requestsService.createRequestFromSession({
+      : await requestBookingService.createRequestFromSession({
           customerId: customer.id,
           ...body,
         });
@@ -95,9 +98,9 @@ export async function listRequestsHandler(
   const user = requireUser(req);
   let items;
   if (res.locals.query.role === REQUEST_ACTOR_ROLE.CUSTOMER) {
-    items = await requestsService.listRequestsForCustomer(user.id);
+    items = await requestReadsService.listRequestsForCustomer(user.id);
   } else {
-    items = await requestsService.listRequestsForProvider(user.id);
+    items = await requestReadsService.listRequestsForProvider(user.id);
   }
   const requests = items.map(({ request, nextVisit }) => ({
     ...request,
@@ -225,7 +228,7 @@ export async function getRequestHandler(
 ): Promise<void> {
   const user = requireUser(req);
   const { revisionReason, items, ...details } =
-    await requestsService.getRequestDetailsForActor(
+    await requestReadsService.getRequestDetailsForActor(
       res.locals.params.id,
       user.id
     );
@@ -309,7 +312,7 @@ export async function getIssueCardHandler(
 ): Promise<void> {
   const user = requireUser(req);
   const { request, aiStatus, diagnosis, isLate, messages, items } =
-    await requestsService.getIssueCard(res.locals.params.id, user.id);
+    await requestReadsService.getIssueCard(res.locals.params.id, user.id);
   const sessionId = request.intakeSessionId;
   res.status(200).json({
     issueCard: {
@@ -332,7 +335,7 @@ export async function saveRequestItemsHandler(
   const user = requireUser(req);
   const { items } = req.body as SaveRequestItemsBody;
   res.status(200).json({
-    items: await requestsService.saveRequestItems(
+    items: await requestItemsService.saveRequestItems(
       res.locals.params.id,
       user.id,
       items
@@ -360,7 +363,7 @@ export async function getRequestTimelineHandler(
   res: Response<unknown, ParamsLocals<RequestIdParams>>
 ): Promise<void> {
   const user = requireUser(req);
-  const timeline = await requestsService.getRequestTimeline(
+  const timeline = await requestReadsService.getRequestTimeline(
     res.locals.params.id,
     user.id
   );

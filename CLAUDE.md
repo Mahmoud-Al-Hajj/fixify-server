@@ -29,7 +29,7 @@ not only by application code.
 ### Source of truth
 
 `schema.sql` is authoritative for the data model. Read it before writing any query. Do not
-reconstruct table shapes from this file, from `docs/PROJECT_SPEC.md`, or from memory —
+reconstruct table shapes from this file, from `docs/archive/fixify.md`, or from memory —
 those describe intent; the schema describes what exists.
 
 Read `docs/ai-plan.md` before touching intake, analysis, or booking from a session.
