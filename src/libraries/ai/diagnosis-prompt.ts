@@ -6,7 +6,7 @@ import {
 
 // Bump whenever SYSTEM_INSTRUCTION or either diagnosis schema changes; stored
 // in ai_diagnosis.promptVersion.
-export const PROMPT_VERSION = 6;
+export const PROMPT_VERSION = 7;
 
 // A Record so that adding a category without a hint fails to compile.
 const CATEGORY_HINTS: Record<CategoryName, string> = {
@@ -93,6 +93,8 @@ DURATION: on-site working time for one visit by a professional, in minutes,
 
 CONFIDENCE: high = the messages and photos clearly point to one cause;
 medium = likely, but other causes are possible; low = too vague to tell.
+Confidence is about a problem at home: when there is none, it is low,
+however sure you are that it is not a home problem.
 
 URGENT: true only if waiting a few days risks damage or danger: an active leak,
 no electricity, no water, a lockout, a gas smell, sparks or a burning smell.
@@ -123,6 +125,7 @@ MISSING INFO: the one photo or detail that would settle the diagnosis.
 kind is photo or detail; ask is one short sentence to the customer, under
 100 characters, e.g. "A photo of the pipe under the sink would help."
 Required when confidence is low, allowed when medium, null when high.
+If there is anything you would still ask, confidence is not high.
 Use photo whenever the problem is something a photo would show: for a
 leak, water, damp, a stain, damage or a broken part, kind is always photo.
 Use detail only when a photo cannot help, e.g. when it happens.
@@ -153,10 +156,10 @@ the customer did not state.
 
 NOT A HOME PROBLEM: if nothing in the messages or photos is a problem at
 home (a greeting, an unrelated photo with no problem described, a car):
-category null, confidence low, isUrgent false, safetyNote null, parts
-empty, and a short polite explanation that Fixify handles problems at
-home. Missing info is a detail: ask what problem at home they need help
-with.
+category null, confidence low (even when you are sure it is not a home
+problem), isUrgent false, safetyNote null, parts empty, and a short
+polite explanation that Fixify handles problems at home. Missing info
+is a detail: ask what problem at home they need help with.
 
 LANGUAGE: the customer may write in Arabic, Arabizi, French or English.
 Always write every text field in simple, plain English.

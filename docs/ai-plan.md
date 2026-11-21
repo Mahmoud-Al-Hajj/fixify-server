@@ -216,7 +216,7 @@ v5 adds `observations` (first key) and `missingInfo` to `diagnosisSchema`, which
 
 - `ai_diagnosis` on success:
   ```json
-  { "model": "<the model that answered, after the hedge>", "promptVersion": <PROMPT_VERSION, now 6>, "completedAt": "<Beirut wall clock>", "diagnosis": { } }
+  { "model": "<the model that answered, after the hedge>", "promptVersion": <PROMPT_VERSION, now 7>, "completedAt": "<Beirut wall clock>", "diagnosis": { } }
   ```
   The stored diagnosis is the model's output after validation. Values are never edited. `completedAt` is set by `markDone`; it is an audit field and no longer decides lateness (§13.4).
 - On failure `ai_diagnosis` is left unchanged (`NULL` on a first attempt, the previous diagnosis after a failed re-run); GET and booking use it only when `ai_status` is `done`. The raw output goes to the winston log. (The JSON column would reject invalid output anyway.)
@@ -238,15 +238,16 @@ v5 adds `observations` (first key) and `missingInfo` to `diagnosisSchema`, which
 - **The JSON Schema is written by hand, not generated from zod.** It uses only keywords in Gemini's subset (`type`, `enum`, `minimum`/`maximum`, `maxItems`, `required`, `description`), with a `description` on each field. Nullable fields use `"type": ["string", "null"]`. A zod-to-JSON converter can emit unsupported keywords, and overly complex schemas may be rejected.
 - **A unit test** checks that `DIAGNOSIS_JSON_SCHEMA` and `diagnosisSchema` have the same field names, the same required fields and the same enum values, so they can't drift apart.
 
-### 4.2 System instruction (v6)
+### 4.2 System instruction (v7)
 
 v5 (2026-11-20) adds observations and missing info, a glossary of Lebanese terms, tie-breaks (damp stain, window material, generator vs house wiring), a multiple-problems rule, and one safety-note sentence (a step that only limits water damage is never a safety note). A photo that shows something other than the text is a contradiction, not a second problem. `missingInfo.kind` is photo for anything a photo would show. The photo hint left the explanation for `missingInfo`.
 
 v6 (2026-11-20) adds unrelated input: a home problem in the text with an unrelated photo is diagnosed from the text (an observation says the photo doesn't show it, confidence not high, missing info asks for a photo); nothing that is a home problem gives category null, confidence low, not urgent, no safety note, no parts, a polite explanation and a missing-info detail asking what they need help with; observations never describe a fault no photo shows and the customer didn't state. It also adds the water-heater tie-break: leaking at the tank or a valve is Plumber; not heating, tripping the breaker, or a burnt cable or plug is Electrician (the Plumber hint now says "water heater leaks").
+v7 (2026-11-21) fixes what the v6 run on 3.1 Flash-Lite got wrong: it gave `high` confidence on input that is not a home problem ("sure it isn't one") and `high` with a missing-info question on `ac-install`. Confidence is now stated to be about a problem at home (low when there is none, however sure), and anything still worth asking means confidence is not high.
 
 ```ts
 // src/libraries/ai/diagnosis-prompt.ts
-export const PROMPT_VERSION = 6;
+export const PROMPT_VERSION = 7;
 
 export const SYSTEM_INSTRUCTION = `
 You are the intake assistant for Fixify, a home-services app in Lebanon.
@@ -319,6 +320,8 @@ DURATION: on-site working time for one visit by a professional, in minutes,
 
 CONFIDENCE: high = the messages and photos clearly point to one cause;
 medium = likely, but other causes are possible; low = too vague to tell.
+Confidence is about a problem at home: when there is none, it is low,
+however sure you are that it is not a home problem.
 
 URGENT: true only if waiting a few days risks damage or danger: an active leak,
 no electricity, no water, a lockout, a gas smell, sparks or a burning smell.
@@ -349,6 +352,7 @@ MISSING INFO: the one photo or detail that would settle the diagnosis.
 kind is photo or detail; ask is one short sentence to the customer, under
 100 characters, e.g. "A photo of the pipe under the sink would help."
 Required when confidence is low, allowed when medium, null when high.
+If there is anything you would still ask, confidence is not high.
 Use photo whenever the problem is something a photo would show: for a
 leak, water, damp, a stain, damage or a broken part, kind is always photo.
 Use detail only when a photo cannot help, e.g. when it happens.
@@ -379,10 +383,10 @@ the customer did not state.
 
 NOT A HOME PROBLEM: if nothing in the messages or photos is a problem at
 home (a greeting, an unrelated photo with no problem described, a car):
-category null, confidence low, isUrgent false, safetyNote null, parts
-empty, and a short polite explanation that Fixify handles problems at
-home. Missing info is a detail: ask what problem at home they need help
-with.
+category null, confidence low (even when you are sure it is not a home
+problem), isUrgent false, safetyNote null, parts empty, and a short
+polite explanation that Fixify handles problems at home. Missing info
+is a detail: ask what problem at home they need help with.
 
 LANGUAGE: the customer may write in Arabic, Arabizi, French or English.
 Always write every text field in simple, plain English.
@@ -892,6 +896,9 @@ A new prompt version must also equal or beat the previous version on every row, 
 | `gemini-3.5-flash-lite` | 17/17 (prompt v4 baseline, 2026-11-20) | 1–41 s | |
 | `gemini-3.1-flash-lite` | prompt v5, 28 cases ×2: 52/54 answered (2 × 503, both passed on a `--case` re-run) | up to 44.8 s | the 2 misses are `ac-arabizi`'s safety note (the photo shows loose wires); `contradiction` passes for the first time; largest output + thought 1414 |
 | `gemini-3.5-flash-lite` | prompt v5: **not verified on the final prompt** | | an earlier v5 draft failed `contradiction` (treated as two problems) and 1 of 2 `missingInfo.kind`; both were fixed in the prompt, and the re-run was stopped at 30 of 56 calls |
+| `gemini-3.5-flash-lite` | prompt v6, 31 cases ×2 (2026-11-21): **passed**; 55/55 answered, the 7 × 503 cases passed on a `--case` re-run | up to 14.5 s | by eye: `contradiction` once called the photo's leak a separate booking; `heater-trips-breaker` writes a safety note (unchecked) |
+| `gemini-3.1-flash-lite` | prompt v6 (2026-11-21): **failed**; 21 × 503 across the run and re-runs | up to 111 s (single attempt; 4 calls over 45 s) | confidence `high` on `no-trade` and `unrelated-fix-this`, `high` + `missingInfo` on `ac-install` (passed on v5); `contradiction` diagnosed the photo's leak. Fixed in v7 |
+| `gemini-3.1-flash-lite` | prompt v7 spot check (2026-11-21): `no-trade`, `unrelated-fix-this`, `greeting-unrelated`, `ac-install` ×2: 7/7 answered passed (1 × 503) | up to 267.9 s (queueing) | full runs on both models still owed |
 
 - Decided 2026-09-28: gemini-3.1-flash-lite main, gemini-3.5-flash-lite fallback via the hedge (§12.2). Peak latency is handled by the hedge, not by the timeout, which stays 45 s.
 - Runs A, B and C′ dropped.
