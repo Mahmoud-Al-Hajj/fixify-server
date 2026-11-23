@@ -22,3 +22,7 @@ export const PIN_BOUNDS = {
 // REQUEST_CREATED payload.source for a booking from an intake session; a
 // search booking's event carries no payload.
 export const BOOKING_SOURCE = { INTAKE: "intake" } as const;
+
+// How long before a visit's scheduled start the provider may start it. A late
+// start is always allowed.
+export const EARLY_START_LIMIT_HOURS = 24;

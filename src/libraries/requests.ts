@@ -51,6 +51,7 @@ import {
 } from "../constants/errors";
 import { assertRequestTransition } from "./request-state-machine";
 import { fitsWorkingHours } from "./slot-rules";
+import { assertStartNotTooEarly } from "./visit-rules";
 import { assertRequestTimeFree } from "./slot-reservation";
 import {
   loadRequestForActor,
@@ -297,6 +298,7 @@ async function startNextVisit(
     throw new ConflictError("A visit of this request is already in progress");
   }
   const next = nextScheduledVisit(visits);
+  assertStartNotTooEarly(wallClockToDate(next.scheduledStart), beirutNow());
 
   // The request row first, the same lock order as cancel.
   await withTransaction(async (conn) => {
@@ -337,6 +339,10 @@ export async function startRequest(
     markCompleted: false,
     prepare: async (request) => {
       const visit = nextScheduledVisit(await findVisitsForRequest(request.id));
+      assertStartNotTooEarly(
+        wallClockToDate(visit.scheduledStart),
+        beirutNow()
+      );
       return {
         eventPayload: { visitId: visit.id },
         applyVisitChanges: (conn) =>

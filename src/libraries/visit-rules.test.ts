@@ -14,6 +14,7 @@ import {
 import {
   assertRescheduleAction,
   assertCanAddFollowUp,
+  assertStartNotTooEarly,
   type FollowUpCheck,
   RESCHEDULE_ACTION,
   type RescheduleCheck,
@@ -276,3 +277,36 @@ for (const [name, change, errorClass] of FOLLOW_UP_REFUSED) {
     );
   });
 }
+
+test("start: up to 24 hours early is allowed", () => {
+  assert.doesNotThrow(() =>
+    assertStartNotTooEarly(at("2026-10-16T12:00"), NOW)
+  );
+  assert.doesNotThrow(() =>
+    assertStartNotTooEarly(at("2026-10-15T13:00"), NOW)
+  );
+});
+
+test("start: a late start is allowed", () => {
+  assert.doesNotThrow(() =>
+    assertStartNotTooEarly(at("2026-10-14T09:00"), NOW)
+  );
+});
+
+test("start: more than 24 hours early names the booked day", () => {
+  assert.throws(
+    () => assertStartNotTooEarly(at("2026-10-16T12:01"), NOW),
+    (err: unknown) =>
+      err instanceof ConflictError &&
+      err.code === "CONFLICT" &&
+      err.message ===
+        "This visit is booked for Friday 16 October; propose a new time to start earlier."
+  );
+});
+
+test("start: the booked day is the wall-clock day, not a shifted one", () => {
+  assert.throws(
+    () => assertStartNotTooEarly(at("2026-10-18T23:30"), NOW),
+    /booked for Sunday 18 October;/
+  );
+});

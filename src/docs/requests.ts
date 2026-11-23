@@ -520,7 +520,7 @@ export const requestsPaths: Paths = {
       "startRequest",
       "Start the next visit",
       "the assigned provider",
-      "On a scheduled job this starts the job; on a job in progress it starts the follow-up visit. Only one visit is in progress at a time."
+      "On a scheduled job this starts the job; on a job in progress it starts the follow-up visit. Only one visit is in progress at a time. A start more than 24 hours before the visit's scheduledStart is a 409 CONFLICT (propose a new time instead); a late start is allowed."
     ),
   },
   "/requests/{id}/complete": {
