@@ -7,7 +7,8 @@ import { AI_STATUS, type AiStatus } from "../constants/ai-status";
 export interface InsertJobEventInput {
   id: string;
   requestId: string;
-  actorUserId: string;
+  // null only for an event the server writes on its own.
+  actorUserId: string | null;
   eventType: JobEventType;
   // Counts are numbers. Prices stay DECIMAL strings in the audit record and
   // are never serialised as JSON numbers (which would make them floats).

@@ -84,16 +84,20 @@ interface TransitionInput {
   prepare?: (request: Request) => Promise<TransitionSideEffects>;
 }
 
-async function transitionRequest(input: TransitionInput): Promise<Request> {
-  const { request, actorRole } = await loadRequestForActor(
-    input.requestId,
-    input.actorUserId
-  );
-  assertRequestTransition(request.status, input.targetStatus, actorRole);
-  const sideEffects: TransitionSideEffects = input.prepare
-    ? await input.prepare(request)
-    : { eventPayload: null };
+type TransitionChange = Pick<
+  TransitionInput,
+  "targetStatus" | "eventType" | "markResponded" | "markCompleted"
+>;
 
+// The transaction of a validated transition: the side effects, the guarded
+// status UPDATE and the job_events row as one unit. actorUserId is null only
+// for a transition the server makes itself.
+async function commitTransition(
+  request: Request,
+  actorUserId: string | null,
+  change: TransitionChange,
+  sideEffects: TransitionSideEffects
+): Promise<void> {
   await withTransaction(async (conn) => {
     if (sideEffects.beforeStatusUpdate) {
       await sideEffects.beforeStatusUpdate(conn);
@@ -101,10 +105,10 @@ async function transitionRequest(input: TransitionInput): Promise<Request> {
     const updated = await updateRequestStatus(conn, {
       id: request.id,
       fromStatus: request.status,
-      toStatus: input.targetStatus,
-      markResponded: input.markResponded,
-      markCompleted: input.markCompleted,
-      requireNoRevision: input.markCompleted,
+      toStatus: change.targetStatus,
+      markResponded: change.markResponded,
+      markCompleted: change.markCompleted,
+      requireNoRevision: change.markCompleted,
     });
     if (!updated) {
       throw new ConflictError(CHANGED_CONCURRENTLY_MESSAGE);
@@ -115,13 +119,40 @@ async function transitionRequest(input: TransitionInput): Promise<Request> {
     await insertJobEvent(conn, {
       id: randomUUID(),
       requestId: request.id,
-      actorUserId: input.actorUserId,
-      eventType: input.eventType,
+      actorUserId,
+      eventType: change.eventType,
       payload: sideEffects.eventPayload,
     });
   });
+}
 
+async function transitionRequest(input: TransitionInput): Promise<Request> {
+  const { request, actorRole } = await loadRequestForActor(
+    input.requestId,
+    input.actorUserId
+  );
+  assertRequestTransition(request.status, input.targetStatus, actorRole);
+  const sideEffects: TransitionSideEffects = input.prepare
+    ? await input.prepare(request)
+    : { eventPayload: null };
+
+  await commitTransition(request, input.actorUserId, input, sideEffects);
   return rereadRequest(request.id);
+}
+
+// A revised quote still waiting is withdrawn; the agreed price stays. Every
+// open visit is cancelled with the request, which releases its slot. A
+// pending request has no visits, so this is a no-op there.
+function cancelSideEffects(
+  request: Request,
+  eventPayload: TransitionSideEffects["eventPayload"]
+): TransitionSideEffects {
+  return {
+    eventPayload,
+    beforeStatusUpdate: (conn) => withdrawPendingRevision(conn, request.id),
+    applyVisitChanges: (conn) =>
+      cancelOpenVisitsForRequest(conn, request.id, OPEN_VISIT_STATUSES),
+  };
 }
 
 export async function rejectRequest(
@@ -149,15 +180,8 @@ export async function cancelRequest(
     eventType: JOB_EVENT_TYPE.REQUEST_CANCELLED,
     markResponded: false,
     markCompleted: false,
-    // A revised quote still waiting is withdrawn; the agreed price stays.
-    // Every open visit is cancelled with the request, which releases its
-    // slot. A pending request has no visits, so this is a no-op there.
-    prepare: async (request) => ({
-      eventPayload: { from: request.status },
-      beforeStatusUpdate: (conn) => withdrawPendingRevision(conn, request.id),
-      applyVisitChanges: (conn) =>
-        cancelOpenVisitsForRequest(conn, request.id, OPEN_VISIT_STATUSES),
-    }),
+    prepare: async (request) =>
+      cancelSideEffects(request, { from: request.status }),
   });
 }
 
