@@ -14,6 +14,7 @@ export const PUBLIC_DETAILS: Record<JobEventType, readonly string[]> = {
   [JOB_EVENT_TYPE.REQUEST_CREATED]: [],
   [JOB_EVENT_TYPE.REQUEST_REJECTED]: [],
   [JOB_EVENT_TYPE.REQUEST_CANCELLED]: ["from"],
+  [JOB_EVENT_TYPE.REQUEST_EXPIRED]: [],
   [JOB_EVENT_TYPE.REQUEST_STARTED]: ["visitId"],
   [JOB_EVENT_TYPE.REQUEST_COMPLETED]: ["visitId"],
   [JOB_EVENT_TYPE.REQUEST_PAID]: ["price"],
@@ -59,7 +60,9 @@ export function publicDetails(
 }
 
 // Who acted, as a role on the request; never a user id. null when the account
-// is gone (job_events.actor_user_id is SET NULL on delete).
+// is gone (job_events.actor_user_id is SET NULL on delete) or the server acted
+// (request_expired). A null actor is never the reader, so both parties' feeds
+// show it.
 export function actorRole(
   actorUserId: string | null,
   request: { customerId: string; providerId: string }

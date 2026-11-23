@@ -242,7 +242,7 @@ export const eventEntry = z
     at: wallClock,
     actor: documented(z.enum(REQUEST_ACTOR_ROLE).nullable(), {
       description:
-        "Who did it, as their role on the request; null when that account is gone.",
+        "Who did it, as their role on the request; null when that account is gone or the server acted (request_expired).",
     }),
     details: documented(
       z

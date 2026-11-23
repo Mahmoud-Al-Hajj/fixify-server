@@ -7,8 +7,12 @@ import {
   markRequestPaid as markRequestPaidModel,
   withdrawPendingRevision,
   updateRequestedStart,
+  findRequestById,
+  findExpiredPendingRequestIds,
+  lockExpiredPendingRequest,
   type Request,
 } from "../models-db/requests";
+import { logger } from "../config/logger";
 import { listAvailability } from "../models-db/providers";
 import {
   findVisitsForRequest,
@@ -22,7 +26,11 @@ import {
   formatWallClock,
   wallClockToDate,
 } from "../models-db/format-datetime";
-import { DEFAULT_VISIT_MINUTES } from "../constants/booking";
+import {
+  DEFAULT_VISIT_MINUTES,
+  EXPIRY_BATCH_SIZE,
+  PENDING_EXPIRY_HOURS,
+} from "../constants/booking";
 import {
   VISIT_STATUS,
   OPEN_VISIT_STATUSES,
@@ -52,7 +60,8 @@ import {
 
 // A request's lifecycle after it is created: reject, cancel, start, complete
 // (transitionRequest: the state machine check, the guarded status UPDATE, the
-// visit changes and the job_events row in one transaction), plus two changes
+// visit changes and the job_events row in one transaction), the server's
+// expiry of stale pending requests (the cancel transition, no actor), plus two changes
 // that are not transitions: marking a completed job paid, and moving the
 // requested start of a pending one. Creation is request-booking.ts, quotes
 // are quotes.ts, reschedules and follow-up visits are visits.ts.
@@ -183,6 +192,66 @@ export async function cancelRequest(
     prepare: async (request) =>
       cancelSideEffects(request, { from: request.status }),
   });
+}
+
+// One pending request whose time passed long ago: the cancel transition with
+// no actor. The server is not a role on the request, so there is no
+// assertRequestTransition role check; pending -> cancelled is a legal edge.
+// Under the row lock it re-checks that the request is still pending and still
+// past the cutoff, so a time the customer just moved forward is not expired.
+async function expirePendingRequest(id: string, cutoff: Date): Promise<void> {
+  const request = await findRequestById(id);
+  if (!request || request.status !== REQUEST_STATUS.PENDING) {
+    throw new ConflictError(CHANGED_CONCURRENTLY_MESSAGE);
+  }
+  const cancel = cancelSideEffects(request, null);
+  await commitTransition(
+    request,
+    null,
+    {
+      targetStatus: REQUEST_STATUS.CANCELLED,
+      eventType: JOB_EVENT_TYPE.REQUEST_EXPIRED,
+      markResponded: false,
+      markCompleted: false,
+    },
+    {
+      ...cancel,
+      beforeStatusUpdate: async (conn) => {
+        if (!(await lockExpiredPendingRequest(conn, id, cutoff))) {
+          throw new ConflictError(CHANGED_CONCURRENTLY_MESSAGE);
+        }
+        await cancel.beforeStatusUpdate?.(conn);
+      },
+    }
+  );
+}
+
+// Cancels pending requests whose requested start passed PENDING_EXPIRY_HOURS
+// before `now` (Beirut wall clock), up to EXPIRY_BATCH_SIZE per call; the next
+// run takes the rest. One transaction per request, so one failure does not
+// stop the others. Returns how many expired.
+export async function expirePendingRequests(now: Date): Promise<number> {
+  const cutoff = new Date(now.getTime() - PENDING_EXPIRY_HOURS * 3_600_000);
+  const ids = await findExpiredPendingRequestIds(cutoff, EXPIRY_BATCH_SIZE);
+  let expired = 0;
+  for (const id of ids) {
+    try {
+      await expirePendingRequest(id, cutoff);
+      expired++;
+    } catch (err) {
+      if (err instanceof ConflictError) {
+        logger.info("pending request changed before it could expire", {
+          requestId: id,
+        });
+      } else {
+        logger.error("failed to expire a pending request", {
+          requestId: id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  }
+  return expired;
 }
 
 async function applyVisitTransition(

@@ -2,6 +2,14 @@
 // first visit's length at quote acceptance (COALESCE(estimated_duration, 60)).
 export const DEFAULT_VISIT_MINUTES = 60;
 
+// A pending request whose requested start passed this long ago is cancelled
+// by the server (request_expired). Counted from requested_start, not from
+// either party's last action. The sweep runs on start and then every
+// EXPIRY_SWEEP_MINUTES, at most EXPIRY_BATCH_SIZE requests per run.
+export const PENDING_EXPIRY_HOURS = 24;
+export const EXPIRY_SWEEP_MINUTES = 15;
+export const EXPIRY_BATCH_SIZE = 100;
+
 // The box a request's map pin must fall in (inclusive), the same box the
 // mobile map picker keeps the pin inside. Checked at the edge only.
 export const PIN_BOUNDS = {

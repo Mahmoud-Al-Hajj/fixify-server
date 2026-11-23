@@ -84,6 +84,28 @@ test("every event type has a whitelist entry", () => {
   }
 });
 
+test("request_expired: no actor, no details, even with a stray payload", () => {
+  assert.deepEqual(
+    toEventEntry(
+      {
+        id: "e1",
+        actorUserId: null,
+        type: JOB_EVENT_TYPE.REQUEST_EXPIRED,
+        payload: { from: "pending" },
+        createdAt: "2026-11-23T10:00:00.000",
+      },
+      REQUEST
+    ),
+    {
+      id: "e1",
+      type: JOB_EVENT_TYPE.REQUEST_EXPIRED,
+      at: "2026-11-23T10:00:00.000",
+      actor: null,
+      details: null,
+    }
+  );
+});
+
 test("actorRole maps the request's parties and nothing else", () => {
   assert.equal(actorRole("customer-id", REQUEST), REQUEST_ACTOR_ROLE.CUSTOMER);
   assert.equal(actorRole("provider-id", REQUEST), REQUEST_ACTOR_ROLE.PROVIDER);
