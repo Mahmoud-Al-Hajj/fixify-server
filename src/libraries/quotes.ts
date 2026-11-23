@@ -21,6 +21,7 @@ import {
   ConflictError,
   ForbiddenError,
   ValidationError,
+  ERROR_CODE,
 } from "../constants/errors";
 import { assertRequestTransition } from "./request-state-machine";
 import { assertQuoteMove } from "./quote-rules";
@@ -269,7 +270,8 @@ export async function acceptQuote(
   const scheduledStart = wallClockToDate(request.requestedStart);
   if (scheduledStart <= beirutNow()) {
     throw new ConflictError(
-      "The requested start time has passed; change the requested start and accept again"
+      "The requested start time has passed; change the requested start and accept again",
+      ERROR_CODE.REQUESTED_START_PASSED
     );
   }
   // COALESCE(estimated_duration_minutes, 60): a job nobody estimated gets the
