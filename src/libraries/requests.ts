@@ -2,61 +2,35 @@ import { randomUUID } from "node:crypto";
 import type { PoolConnection } from "mysql2/promise";
 import { withTransaction } from "../models-db/pool";
 import {
-  insertRequest,
-  findRequestById,
   updateRequestStatus,
   lockRequestForUpdate,
   markRequestPaid as markRequestPaidModel,
   withdrawPendingRevision,
-  listRequestsForCustomer as listRequestsForCustomerModel,
-  listRequestsForProvider as listRequestsForProviderModel,
-  findRequestNames,
   updateRequestedStart,
+  findRequestById,
+  findExpiredPendingRequestIds,
+  lockExpiredPendingRequest,
   type Request,
-  type NamedRequest,
-  type InsertRequestInput,
 } from "../models-db/requests";
-import {
-  findProviderAcceptance,
-  providerAcceptsCategory,
-  listAvailability,
-  lockProviderForUpdate,
-} from "../models-db/providers";
+import { logger } from "../config/logger";
+import { listAvailability } from "../models-db/providers";
 import {
   findVisitsForRequest,
-  findOpenVisitsForRequests,
   updateVisitStatus,
   cancelOpenVisitsForRequest,
   type Visit,
 } from "../models-db/visits";
+import { insertJobEvent } from "../models-db/job-events";
 import {
-  insertJobEvent,
-  findAiStatusAtBooking,
-  findLatestQuoteReason,
-  listEventsForRequest,
-} from "../models-db/job-events";
-import { beirutNow, wallClockToDate } from "../models-db/format-datetime";
-import { findReviewForRequest } from "../models-db/reviews";
+  beirutNow,
+  formatWallClock,
+  wallClockToDate,
+} from "../models-db/format-datetime";
 import {
-  findIntakeSession,
-  listIntakeMessages,
-  lockIntakeSession,
-  readSessionFreeze,
-  type IntakeMessage,
-} from "../models-db/intake";
-import { findCategoryName } from "../models-db/categories";
-import {
-  listRequestItems,
-  insertRequestItems,
-  updateRequestItem,
-  deleteRequestItems,
-  setRequestItemOrder,
-  type RequestItem,
-} from "../models-db/request-items";
-import { ITEM_SOURCE } from "../constants/item-source";
-import { AI_STATUS, type AiStatus } from "../constants/ai-status";
-import { MESSAGE_SENDER } from "../constants/message-sender";
-import { BOOKING_SOURCE, DEFAULT_VISIT_MINUTES } from "../constants/booking";
+  DEFAULT_VISIT_MINUTES,
+  EXPIRY_BATCH_SIZE,
+  PENDING_EXPIRY_HOURS,
+} from "../constants/booking";
 import {
   VISIT_STATUS,
   OPEN_VISIT_STATUSES,
@@ -71,470 +45,27 @@ import {
   type RequestActorRole,
 } from "../constants/request-status";
 import {
-  NotFoundError,
   ForbiddenError,
   ValidationError,
   ConflictError,
-  ERROR_CODE,
 } from "../constants/errors";
 import { assertRequestTransition } from "./request-state-machine";
-import {
-  currentDiagnosis,
-  currentStoredDiagnosis,
-  toDiagnosisView,
-  type DiagnosisView,
-} from "./intake";
-import { buildDescription, deriveBookingFields } from "./booking-from-session";
-import { toEventEntry, type EventEntry } from "./event-entries";
 import { fitsWorkingHours } from "./slot-rules";
+import { assertStartNotTooEarly } from "./visit-rules";
 import { assertRequestTimeFree } from "./slot-reservation";
+import {
+  loadRequestForActor,
+  rereadRequest,
+  CHANGED_CONCURRENTLY_MESSAGE,
+} from "./request-access";
 
-// A request this service just wrote; missing only if deleted concurrently,
-// which no endpoint does.
-export async function rereadRequest(id: string): Promise<Request> {
-  const request = await findRequestById(id);
-  if (!request) {
-    throw new Error("Request was written but could not be re-read");
-  }
-  return request;
-}
-
-export type CreateRequestInput = Omit<
-  InsertRequestInput,
-  "id" | "intakeSessionId"
->;
-
-// The checks every booking runs before its transaction, whichever path it
-// came through.
-async function assertBookable(
-  input: Pick<
-    CreateRequestInput,
-    "customerId" | "providerId" | "categoryId" | "requestedStart"
-  >
-): Promise<void> {
-  if (input.customerId === input.providerId) {
-    throw new ValidationError("You cannot request service from yourself");
-  }
-  if (input.requestedStart !== null && input.requestedStart <= beirutNow()) {
-    throw new ValidationError("requestedStart must be in the future");
-  }
-
-  const provider = await findProviderAcceptance(input.providerId);
-  if (!provider) {
-    throw new NotFoundError("Provider not found");
-  }
-
-  // The category check runs before is_accepting: a wrong category is a
-  // permanent input error, a paused provider is temporary state. Reporting
-  // the 409 first would send the client away to retry a request that can
-  // never succeed.
-  const offersCategory = await providerAcceptsCategory(
-    input.providerId,
-    input.categoryId
-  );
-  if (!offersCategory) {
-    throw new ValidationError("Provider does not offer this category");
-  }
-  if (!provider.isAccepting) {
-    throw new ConflictError(
-      "This provider is not currently accepting requests"
-    );
-  }
-}
-
-// A pending request holds no slot, but its time must not clash with an open
-// visit of the provider or this customer's own pending request to them.
-// Legacy requests with no requestedStart have no time to check.
-async function assertTimeFree(
-  conn: PoolConnection,
-  input: Pick<
-    CreateRequestInput,
-    "customerId" | "providerId" | "requestedStart"
-  > & {
-    estimatedDurationMinutes: number | null;
-  },
-  excludeRequestId: string | null
-): Promise<void> {
-  if (input.requestedStart === null) return;
-  const minutes = input.estimatedDurationMinutes ?? DEFAULT_VISIT_MINUTES;
-  await assertRequestTimeFree(conn, {
-    customerId: input.customerId,
-    providerId: input.providerId,
-    start: input.requestedStart,
-    end: new Date(input.requestedStart.getTime() + minutes * 60_000),
-    excludeRequestId,
-  });
-}
-
-export async function createRequest(
-  input: CreateRequestInput
-): Promise<Request> {
-  await assertBookable(input);
-  const id = randomUUID();
-
-  await withTransaction(async (conn) => {
-    await assertTimeFree(conn, input, null);
-    await insertRequest(conn, { id, ...input, intakeSessionId: null });
-    await insertJobEvent(conn, {
-      id: randomUUID(),
-      requestId: id,
-      actorUserId: input.customerId,
-      eventType: JOB_EVENT_TYPE.REQUEST_CREATED,
-      payload: null,
-    });
-  });
-
-  return rereadRequest(id);
-}
-
-export type BookFromSessionInput = Pick<
-  CreateRequestInput,
-  | "customerId"
-  | "providerId"
-  | "categoryId"
-  | "addressText"
-  | "latitude"
-  | "longitude"
-  | "addressDetails"
-  | "requestedStart"
-  | "isUrgent"
-> & { intakeSessionId: string };
-
-// docs/ai-plan.md §13.3. The session lock is the transaction's first read, so
-// a message or booking committed while waiting is seen. The service type,
-// duration, description and parts come from the session, not the client.
-export async function createRequestFromSession(
-  input: BookFromSessionInput
-): Promise<Request> {
-  await assertBookable(input);
-  const categoryName = await findCategoryName(input.categoryId);
-  if (categoryName === null) {
-    throw new Error("A category the provider offers could not be read");
-  }
-  const id = randomUUID();
-
-  await withTransaction(async (conn) => {
-    const session = await lockIntakeSession(conn, input.intakeSessionId);
-    if (!session || session.customerId !== input.customerId) {
-      throw new NotFoundError("Intake session not found");
-    }
-    // Before the first plain read (readSessionFreeze), so the overlap checks
-    // below see every booking committed while we waited. Lock order: session,
-    // then provider.
-    await lockProviderForUpdate(conn, input.providerId);
-    if ((await readSessionFreeze(conn, input.intakeSessionId)).booked) {
-      throw new ConflictError(
-        "This problem has already been booked; describe a new one in a new session",
-        ERROR_CODE.SESSION_ALREADY_BOOKED
-      );
-    }
-    const messages = await listIntakeMessages(input.intakeSessionId, conn);
-    const description = buildDescription(
-      messages
-        .filter((message) => message.sender === MESSAGE_SENDER.CUSTOMER)
-        .map((message) => message.body)
-    );
-    if (description === null) {
-      throw new ValidationError(
-        "Describe the problem in words before booking",
-        ERROR_CODE.SESSION_HAS_NO_TEXT
-      );
-    }
-    const derived = deriveBookingFields(
-      {
-        aiStatus: session.aiStatus,
-        diagnosis: currentDiagnosis({ id: input.intakeSessionId, ...session }),
-      },
-      categoryName
-    );
-    await assertTimeFree(conn, { ...input, ...derived }, null);
-    await insertRequest(conn, {
-      ...input,
-      id,
-      serviceType: derived.serviceType,
-      description,
-      estimatedDurationMinutes: derived.estimatedDurationMinutes,
-    });
-    await insertRequestItems(
-      conn,
-      id,
-      derived.parts.map((part) => ({
-        id: randomUUID(),
-        name: part.name,
-        quantity: part.quantity,
-        unit: part.unit,
-        estimatedUnitPrice: null,
-        source: ITEM_SOURCE.AI,
-      }))
-    );
-    await insertJobEvent(conn, {
-      id: randomUUID(),
-      requestId: id,
-      actorUserId: input.customerId,
-      eventType: JOB_EVENT_TYPE.REQUEST_CREATED,
-      payload: {
-        source: BOOKING_SOURCE.INTAKE,
-        intakeSessionId: input.intakeSessionId,
-        aiStatusAtBooking: session.aiStatus,
-        usedDiagnosis: derived.usedDiagnosis,
-        partsSeeded: derived.parts.length,
-      },
-    });
-  });
-
-  return rereadRequest(id);
-}
-
-function resolveActorRole(
-  request: Request,
-  actorUserId: string
-): RequestActorRole {
-  if (request.customerId === actorUserId) {
-    return REQUEST_ACTOR_ROLE.CUSTOMER;
-  }
-  if (request.providerId === actorUserId) {
-    return REQUEST_ACTOR_ROLE.PROVIDER;
-  }
-  throw new ForbiddenError("You are not a party to this request");
-}
-
-// The one entry point for acting on an existing request: 404 if it doesn't
-// exist, 403 if the caller is neither its customer nor its provider. Every
-// request action goes through here, so a change to who may touch a request is
-// made in one place. The resolved role is returned so callers check it rather
-// than re-deriving or assuming it.
-export async function loadRequestForActor(
-  requestId: string,
-  actorUserId: string
-): Promise<{ request: Request; actorRole: RequestActorRole }> {
-  const request = await findRequestById(requestId);
-  if (!request) {
-    throw new NotFoundError("Request not found");
-  }
-  return { request, actorRole: resolveActorRole(request, actorUserId) };
-}
-
-export async function getRequestForActor(
-  requestId: string,
-  actorUserId: string
-): Promise<{ request: NamedRequest; visits: Visit[]; hasReview: boolean }> {
-  const { request, actorRole } = await loadRequestForActor(
-    requestId,
-    actorUserId
-  );
-  const names = await findRequestNames(request.id, actorRole);
-  if (!names) {
-    throw new NotFoundError("Request not found");
-  }
-  const visits = await findVisitsForRequest(request.id);
-  const review = await findReviewForRequest(request.id);
-  return {
-    request: { ...request, ...names },
-    visits,
-    hasReview: review !== null,
-  };
-}
-
-// GET /requests/:id: the details plus the parts list and the reason for a
-// revised quote that waits for the customer. There is no column for the
-// reason; while a revision is open, the latest QUOTE_PROPOSED event is that
-// revision. Items are read after the ownership check in getRequestForActor.
-export async function getRequestDetailsForActor(
-  requestId: string,
-  actorUserId: string
-): Promise<
-  Awaited<ReturnType<typeof getRequestForActor>> & {
-    revisionReason: string | null;
-    items: RequestItem[];
-  }
-> {
-  const details = await getRequestForActor(requestId, actorUserId);
-  const { request } = details;
-  const revisionOpen =
-    request.status === REQUEST_STATUS.IN_PROGRESS &&
-    request.priceStatus === PRICE_STATUS.PROPOSED &&
-    request.revisedPrice !== null;
-  const revisionReason = revisionOpen
-    ? await findLatestQuoteReason(request.id)
-    : null;
-  const items = await listRequestItems(request.id);
-  return { ...details, revisionReason, items };
-}
-
-// The job's history for either party, oldest first, in its public shape: no
-// raw payloads, no user ids (event-entries.ts).
-export async function getRequestTimeline(
-  requestId: string,
-  actorUserId: string
-): Promise<EventEntry[]> {
-  const { request } = await loadRequestForActor(requestId, actorUserId);
-  const events = await listEventsForRequest(request.id);
-  return events.map((event) => toEventEntry(event, request));
-}
-
-export interface IssueCard {
-  request: Request;
-  // null for a request booked through search, which has no session.
-  aiStatus: AiStatus | null;
-  diagnosis: DiagnosisView | null;
-  isLate: boolean;
-  messages: IntakeMessage[];
-  items: RequestItem[];
-}
-
-// What either party reads for a job: the request, the customer's intake
-// conversation and its diagnosis, and the parts list. The provider reaches the
-// intake only through this request. Late = the analysis was still pending at
-// booking and is done now; sessions are frozen after booking, so nothing else
-// can make it done later.
-export async function getIssueCard(
-  requestId: string,
-  actorUserId: string
-): Promise<IssueCard> {
-  const { request } = await loadRequestForActor(requestId, actorUserId);
-  const items = await listRequestItems(request.id);
-  if (request.intakeSessionId === null) {
-    return {
-      request,
-      aiStatus: null,
-      diagnosis: null,
-      isLate: false,
-      messages: [],
-      items,
-    };
-  }
-  const session = await findIntakeSession(request.intakeSessionId);
-  if (!session) {
-    throw new Error("A request's intake session could not be read");
-  }
-  const stored = currentStoredDiagnosis(session);
-  return {
-    request,
-    aiStatus: session.aiStatus,
-    diagnosis: stored === null ? null : await toDiagnosisView(stored),
-    isLate:
-      stored !== null &&
-      (await findAiStatusAtBooking(request.id)) === AI_STATUS.PENDING,
-    messages: await listIntakeMessages(session.id),
-    items,
-  };
-}
-
-export type RequestItemInput = Omit<RequestItem, "id" | "source"> & {
-  id?: string | undefined;
-};
-
-const PARTS_EDITABLE: readonly RequestStatus[] = [
-  REQUEST_STATUS.PENDING,
-  REQUEST_STATUS.SCHEDULED,
-  REQUEST_STATUS.IN_PROGRESS,
-];
-
-// Replaces the parts list with the provider's version. New and edited items
-// are marked source = 'provider'; unchanged items keep their source. One
-// job_events row records the counts, only when something changed.
-export async function saveRequestItems(
-  requestId: string,
-  actorUserId: string,
-  input: readonly RequestItemInput[]
-): Promise<RequestItem[]> {
-  const { request, actorRole } = await loadRequestForActor(
-    requestId,
-    actorUserId
-  );
-  if (actorRole !== REQUEST_ACTOR_ROLE.PROVIDER) {
-    throw new ForbiddenError(
-      "Only the assigned provider can edit the parts list"
-    );
-  }
-  await withTransaction(async (conn) => {
-    const status = await lockRequestForUpdate(conn, request.id);
-    if (status === null || !PARTS_EDITABLE.includes(status)) {
-      throw new ConflictError(
-        "The parts list can no longer change: the request is closed"
-      );
-    }
-    const current = new Map(
-      (await listRequestItems(request.id, conn)).map((i) => [i.id, i])
-    );
-    const unknown = input.filter((i) => i.id && !current.has(i.id));
-    if (unknown.length > 0) {
-      throw new ValidationError("Item id(s) not on this request");
-    }
-    const kept = new Set(input.map((i) => i.id));
-    const removed = [...current.keys()].filter((id) => !kept.has(id));
-    const added: RequestItem[] = [];
-    const updated: RequestItem[] = [];
-    const order: string[] = [];
-    for (const { id, ...fields } of input) {
-      const before = id ? current.get(id) : undefined;
-      const item = {
-        ...fields,
-        id: id ?? randomUUID(),
-        source: ITEM_SOURCE.PROVIDER,
-      };
-      order.push(item.id);
-      if (!before) {
-        added.push(item);
-      } else if (
-        before.name !== item.name ||
-        before.quantity !== item.quantity ||
-        before.unit !== item.unit ||
-        before.estimatedUnitPrice !== item.estimatedUnitPrice
-      ) {
-        updated.push(item);
-      }
-    }
-    await deleteRequestItems(conn, removed);
-    await insertRequestItems(conn, request.id, added);
-    for (const item of updated) {
-      await updateRequestItem(conn, item);
-    }
-    await setRequestItemOrder(conn, request.id, order);
-    // A save that only reorders changes no part, so it writes no event.
-    if (added.length + updated.length + removed.length === 0) return;
-    await insertJobEvent(conn, {
-      id: randomUUID(),
-      requestId: request.id,
-      actorUserId,
-      eventType: JOB_EVENT_TYPE.REQUEST_ITEMS_UPDATED,
-      payload: {
-        added: added.length,
-        updated: updated.length,
-        removed: removed.length,
-      },
-    });
-  });
-  return listRequestItems(request.id);
-}
-
-async function attachNextVisits<T extends Request>(
-  requests: T[]
-): Promise<Array<{ request: T; nextVisit: Visit | null }>> {
-  const openVisits = await findOpenVisitsForRequests(
-    requests.map((request) => request.id),
-    OPEN_VISIT_STATUSES
-  );
-  // Rows arrive ordered by request, then scheduled_start, so the first one
-  // seen for each request is its next visit.
-  const nextVisitByRequest = new Map<string, Visit>();
-  for (const visit of openVisits) {
-    if (!nextVisitByRequest.has(visit.requestId)) {
-      nextVisitByRequest.set(visit.requestId, visit);
-    }
-  }
-  return requests.map((request) => ({
-    request,
-    nextVisit: nextVisitByRequest.get(request.id) ?? null,
-  }));
-}
-
-// Always raised as a ConflictError (409 CONFLICT): the action was valid when
-// checked but another write got there first, so reloading and retrying may
-// succeed. InvalidTransitionError stays reserved for moves that are never
-// allowed, whatever the timing.
-export const CHANGED_CONCURRENTLY_MESSAGE =
-  "Request was changed by another action; reload it and try again";
+// A request's lifecycle after it is created: reject, cancel, start, complete
+// (transitionRequest: the state machine check, the guarded status UPDATE, the
+// visit changes and the job_events row in one transaction), the server's
+// expiry of stale pending requests (the cancel transition, no actor), plus two changes
+// that are not transitions: marking a completed job paid, and moving the
+// requested start of a pending one. Creation is request-booking.ts, quotes
+// are quotes.ts, reschedules and follow-up visits are visits.ts.
 
 interface TransitionSideEffects {
   eventPayload: Readonly<Record<string, string>> | null;
@@ -563,16 +94,20 @@ interface TransitionInput {
   prepare?: (request: Request) => Promise<TransitionSideEffects>;
 }
 
-async function transitionRequest(input: TransitionInput): Promise<Request> {
-  const { request, actorRole } = await loadRequestForActor(
-    input.requestId,
-    input.actorUserId
-  );
-  assertRequestTransition(request.status, input.targetStatus, actorRole);
-  const sideEffects: TransitionSideEffects = input.prepare
-    ? await input.prepare(request)
-    : { eventPayload: null };
+type TransitionChange = Pick<
+  TransitionInput,
+  "targetStatus" | "eventType" | "markResponded" | "markCompleted"
+>;
 
+// The transaction of a validated transition: the side effects, the guarded
+// status UPDATE and the job_events row as one unit. actorUserId is null only
+// for a transition the server makes itself.
+async function commitTransition(
+  request: Request,
+  actorUserId: string | null,
+  change: TransitionChange,
+  sideEffects: TransitionSideEffects
+): Promise<void> {
   await withTransaction(async (conn) => {
     if (sideEffects.beforeStatusUpdate) {
       await sideEffects.beforeStatusUpdate(conn);
@@ -580,10 +115,10 @@ async function transitionRequest(input: TransitionInput): Promise<Request> {
     const updated = await updateRequestStatus(conn, {
       id: request.id,
       fromStatus: request.status,
-      toStatus: input.targetStatus,
-      markResponded: input.markResponded,
-      markCompleted: input.markCompleted,
-      requireNoRevision: input.markCompleted,
+      toStatus: change.targetStatus,
+      markResponded: change.markResponded,
+      markCompleted: change.markCompleted,
+      requireNoRevision: change.markCompleted,
     });
     if (!updated) {
       throw new ConflictError(CHANGED_CONCURRENTLY_MESSAGE);
@@ -594,13 +129,40 @@ async function transitionRequest(input: TransitionInput): Promise<Request> {
     await insertJobEvent(conn, {
       id: randomUUID(),
       requestId: request.id,
-      actorUserId: input.actorUserId,
-      eventType: input.eventType,
+      actorUserId,
+      eventType: change.eventType,
       payload: sideEffects.eventPayload,
     });
   });
+}
 
+async function transitionRequest(input: TransitionInput): Promise<Request> {
+  const { request, actorRole } = await loadRequestForActor(
+    input.requestId,
+    input.actorUserId
+  );
+  assertRequestTransition(request.status, input.targetStatus, actorRole);
+  const sideEffects: TransitionSideEffects = input.prepare
+    ? await input.prepare(request)
+    : { eventPayload: null };
+
+  await commitTransition(request, input.actorUserId, input, sideEffects);
   return rereadRequest(request.id);
+}
+
+// A revised quote still waiting is withdrawn; the agreed price stays. Every
+// open visit is cancelled with the request, which releases its slot. A
+// pending request has no visits, so this is a no-op there.
+function cancelSideEffects(
+  request: Request,
+  eventPayload: TransitionSideEffects["eventPayload"]
+): TransitionSideEffects {
+  return {
+    eventPayload,
+    beforeStatusUpdate: (conn) => withdrawPendingRevision(conn, request.id),
+    applyVisitChanges: (conn) =>
+      cancelOpenVisitsForRequest(conn, request.id, OPEN_VISIT_STATUSES),
+  };
 }
 
 export async function rejectRequest(
@@ -628,16 +190,69 @@ export async function cancelRequest(
     eventType: JOB_EVENT_TYPE.REQUEST_CANCELLED,
     markResponded: false,
     markCompleted: false,
-    // A revised quote still waiting is withdrawn; the agreed price stays.
-    // Every open visit is cancelled with the request, which releases its
-    // slot. A pending request has no visits, so this is a no-op there.
-    prepare: async (request) => ({
-      eventPayload: { from: request.status },
-      beforeStatusUpdate: (conn) => withdrawPendingRevision(conn, request.id),
-      applyVisitChanges: (conn) =>
-        cancelOpenVisitsForRequest(conn, request.id, OPEN_VISIT_STATUSES),
-    }),
+    prepare: async (request) =>
+      cancelSideEffects(request, { from: request.status }),
   });
+}
+
+// One pending request whose time passed long ago: the cancel transition with
+// no actor. The server is not a role on the request, so there is no
+// assertRequestTransition role check; pending -> cancelled is a legal edge.
+// Under the row lock it re-checks that the request is still pending and still
+// past the cutoff, so a time the customer just moved forward is not expired.
+async function expirePendingRequest(id: string, cutoff: Date): Promise<void> {
+  const request = await findRequestById(id);
+  if (!request || request.status !== REQUEST_STATUS.PENDING) {
+    throw new ConflictError(CHANGED_CONCURRENTLY_MESSAGE);
+  }
+  const cancel = cancelSideEffects(request, null);
+  await commitTransition(
+    request,
+    null,
+    {
+      targetStatus: REQUEST_STATUS.CANCELLED,
+      eventType: JOB_EVENT_TYPE.REQUEST_EXPIRED,
+      markResponded: false,
+      markCompleted: false,
+    },
+    {
+      ...cancel,
+      beforeStatusUpdate: async (conn) => {
+        if (!(await lockExpiredPendingRequest(conn, id, cutoff))) {
+          throw new ConflictError(CHANGED_CONCURRENTLY_MESSAGE);
+        }
+        await cancel.beforeStatusUpdate?.(conn);
+      },
+    }
+  );
+}
+
+// Cancels pending requests whose requested start passed PENDING_EXPIRY_HOURS
+// before `now` (Beirut wall clock), up to EXPIRY_BATCH_SIZE per call; the next
+// run takes the rest. One transaction per request, so one failure does not
+// stop the others. Returns how many expired.
+export async function expirePendingRequests(now: Date): Promise<number> {
+  const cutoff = new Date(now.getTime() - PENDING_EXPIRY_HOURS * 3_600_000);
+  const ids = await findExpiredPendingRequestIds(cutoff, EXPIRY_BATCH_SIZE);
+  let expired = 0;
+  for (const id of ids) {
+    try {
+      await expirePendingRequest(id, cutoff);
+      expired++;
+    } catch (err) {
+      if (err instanceof ConflictError) {
+        logger.info("pending request changed before it could expire", {
+          requestId: id,
+        });
+      } else {
+        logger.error("failed to expire a pending request", {
+          requestId: id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  }
+  return expired;
 }
 
 async function applyVisitTransition(
@@ -657,6 +272,16 @@ async function applyVisitTransition(
   }
 }
 
+// Visits come back ordered by scheduled_start, so this is the earliest visit
+// still waiting to start.
+function nextScheduledVisit(visits: readonly Visit[]): Visit {
+  const next = visits.find((visit) => visit.status === VISIT_STATUS.SCHEDULED);
+  if (!next) {
+    throw new ConflictError("This request has no scheduled visit to start");
+  }
+  return next;
+}
+
 // A job that is already in progress has finished its visit and has a
 // follow-up scheduled: start that one. Not a request transition, so the
 // state machine is not involved; the role rule matches its start(P).
@@ -672,10 +297,8 @@ async function startNextVisit(
   if (visits.some((visit) => visit.status === VISIT_STATUS.IN_PROGRESS)) {
     throw new ConflictError("A visit of this request is already in progress");
   }
-  const next = visits.find((visit) => visit.status === VISIT_STATUS.SCHEDULED);
-  if (!next) {
-    throw new ConflictError("This request has no scheduled visit to start");
-  }
+  const next = nextScheduledVisit(visits);
+  assertStartNotTooEarly(wallClockToDate(next.scheduledStart), beirutNow());
 
   // The request row first, the same lock order as cancel.
   await withTransaction(async (conn) => {
@@ -715,14 +338,11 @@ export async function startRequest(
     markResponded: false,
     markCompleted: false,
     prepare: async (request) => {
-      // Visits come back ordered by scheduled_start, so this is the earliest
-      // visit still waiting to start.
-      const visit = (await findVisitsForRequest(request.id)).find(
-        (candidate) => candidate.status === VISIT_STATUS.SCHEDULED
+      const visit = nextScheduledVisit(await findVisitsForRequest(request.id));
+      assertStartNotTooEarly(
+        wallClockToDate(visit.scheduledStart),
+        beirutNow()
       );
-      if (!visit) {
-        throw new ConflictError("This request has no scheduled visit to start");
-      }
       return {
         eventPayload: { visitId: visit.id },
         applyVisitChanges: (conn) =>
@@ -875,16 +495,13 @@ export async function changeRequestedStart(
   await withTransaction(async (conn) => {
     // Provider lock first, then the request row (the guarded UPDATE): the
     // same order as quote acceptance.
-    await assertTimeFree(
-      conn,
-      {
-        customerId: request.customerId,
-        providerId: request.providerId,
-        requestedStart: start,
-        estimatedDurationMinutes: request.estimatedDurationMinutes,
-      },
-      request.id
-    );
+    await assertRequestTimeFree(conn, {
+      customerId: request.customerId,
+      providerId: request.providerId,
+      requestedStart: start,
+      estimatedDurationMinutes: request.estimatedDurationMinutes,
+      excludeRequestId: request.id,
+    });
     const changed = await updateRequestedStart(conn, {
       id: request.id,
       status: REQUEST_STATUS.PENDING,
@@ -905,22 +522,10 @@ export async function changeRequestedStart(
         ...(request.requestedStart === null
           ? {}
           : { from: request.requestedStart }),
-        to: start.toISOString().slice(0, 23),
+        to: formatWallClock(start),
       },
     });
   });
 
   return rereadRequest(request.id);
-}
-
-export async function listRequestsForCustomer(
-  customerId: string
-): Promise<Array<{ request: NamedRequest; nextVisit: Visit | null }>> {
-  return attachNextVisits(await listRequestsForCustomerModel(customerId));
-}
-
-export async function listRequestsForProvider(
-  providerId: string
-): Promise<Array<{ request: NamedRequest; nextVisit: Visit | null }>> {
-  return attachNextVisits(await listRequestsForProviderModel(providerId));
 }

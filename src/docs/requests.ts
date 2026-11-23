@@ -15,7 +15,7 @@ import { VISIT_STATUS } from "../constants/visit-status";
 import type { toMessageView } from "../controllers/intake";
 import type { toRequestPhotoView } from "../controllers/requests";
 import { MAX_PHOTOS_PER_REQUEST } from "../libraries/request-photos";
-import type { IssueCard } from "../libraries/requests";
+import type { IssueCard } from "../libraries/request-reads";
 import { MAX_PHOTOS } from "../middlewares/upload";
 import type { RequestItem } from "../models-db/request-items";
 import type { NamedRequest, Request } from "../models-db/requests";
@@ -512,7 +512,7 @@ export const requestsPaths: Paths = {
       "cancelRequest",
       "Cancel a job",
       "the customer while pending; either party once scheduled or in progress",
-      "Cancels every open visit, which frees its slot, and withdraws a revised quote that is waiting; the agreed price stays."
+      "Cancels every open visit, which frees its slot, and withdraws a revised quote that is waiting; the agreed price stays. The server also cancels a pending request on its own 24 hours after its requestedStart (event request_expired, no actor)."
     ),
   },
   "/requests/{id}/start": {
@@ -520,7 +520,7 @@ export const requestsPaths: Paths = {
       "startRequest",
       "Start the next visit",
       "the assigned provider",
-      "On a scheduled job this starts the job; on a job in progress it starts the follow-up visit. Only one visit is in progress at a time."
+      "On a scheduled job this starts the job; on a job in progress it starts the follow-up visit. Only one visit is in progress at a time. A start more than 24 hours before the visit's scheduledStart is a 409 CONFLICT (propose a new time instead); a late start is allowed."
     ),
   },
   "/requests/{id}/complete": {

@@ -3,6 +3,7 @@ import { hasOverlappingVisit } from "../models-db/visits";
 import { hasOverlappingPendingRequest } from "../models-db/requests";
 import { lockProviderForUpdate } from "../models-db/providers";
 import { OPEN_VISIT_STATUSES } from "../constants/visit-status";
+import { DEFAULT_VISIT_MINUTES } from "../constants/booking";
 import { ConflictError, ERROR_CODE } from "../constants/errors";
 
 const OVERLAP_MESSAGE =
@@ -47,20 +48,26 @@ export async function reserveSlot(
 // customers, so only an open visit or this customer's own pending request to
 // this provider can clash. Same lock as reserveSlot, so two requests racing
 // for one slot are serialized. Both refusals are TIME_OVERLAP, so the client
-// can tell them from the other 409s. excludeRequestId: the request being moved.
+// can tell them from the other 409s. A request with no estimate counts as
+// DEFAULT_VISIT_MINUTES; one booked before requestedStart was required has no
+// time to check. excludeRequestId: the request being moved.
 export async function assertRequestTimeFree(
   conn: PoolConnection,
   input: {
     customerId: string;
     providerId: string;
-    start: Date;
-    end: Date;
+    requestedStart: Date | null;
+    estimatedDurationMinutes: number | null;
     excludeRequestId: string | null;
   }
 ): Promise<void> {
+  const start = input.requestedStart;
+  if (start === null) return;
+  const minutes = input.estimatedDurationMinutes ?? DEFAULT_VISIT_MINUTES;
+  const end = new Date(start.getTime() + minutes * 60_000);
   await reserveSlot(
     conn,
-    { ...input, excludeVisitId: null },
+    { providerId: input.providerId, start, end, excludeVisitId: null },
     ERROR_CODE.TIME_OVERLAP
   );
   if (
@@ -68,8 +75,8 @@ export async function assertRequestTimeFree(
       conn,
       input.customerId,
       input.providerId,
-      input.start,
-      input.end,
+      start,
+      end,
       input.excludeRequestId
     )
   ) {

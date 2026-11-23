@@ -247,6 +247,42 @@ export async function lockRequestForUpdate(
   return row ? (row.status as RequestStatus) : null;
 }
 
+// Pending requests whose requested start is before the cutoff, oldest first.
+// A request with no requested start (booked before it was required) never
+// matches. No index serves it: it runs only in the expiry sweep, every few
+// minutes and off any request path, so a scan of requests is accepted.
+export async function findExpiredPendingRequestIds(
+  cutoff: Date,
+  limit: number
+): Promise<string[]> {
+  const [rows] = await pool.query<RowDataPacket[]>(
+    `SELECT id FROM requests
+     WHERE status = ? AND requested_start < ?
+     ORDER BY requested_start, id
+     LIMIT ?`,
+    [REQUEST_STATUS.PENDING, cutoff, limit]
+  );
+  return rows.map((row) => String(row.id));
+}
+
+// Locks the request row if it is still pending with its requested start
+// before the cutoff; false when it no longer is (the customer moved the time,
+// or another action moved the request). A locking read, so it sees the latest
+// committed row and serialises with changeRequestedStart's guarded UPDATE.
+export async function lockExpiredPendingRequest(
+  conn: PoolConnection,
+  id: string,
+  cutoff: Date
+): Promise<boolean> {
+  const [rows] = await conn.query<RowDataPacket[]>(
+    `SELECT id FROM requests
+     WHERE id = ? AND status = ? AND requested_start < ?
+     FOR UPDATE`,
+    [id, REQUEST_STATUS.PENDING, cutoff]
+  );
+  return rows.length === 1;
+}
+
 // Optimistic concurrency: the row changes only if it is still in the status
 // the caller validated against. Returns false when another writer moved it
 // first, so the caller can fail instead of overwriting that transition.
@@ -322,10 +358,10 @@ export async function updateQuoteState(
   return result.affectedRows === 1;
 }
 
-// A revision move on an in-progress job. applyRevision copies revised_price
-// into price (the customer accepted it) before revised_price is overwritten;
-// single-table SET assignments run left to right. Same optimistic guard as
-// updateQuoteState: false when the row no longer matches.
+// A revision move on an in-progress job. copyRevisionToPrice copies
+// revised_price into price (the customer accepted it) before revised_price is
+// overwritten; single-table SET assignments run left to right. Same
+// optimistic guard as updateQuoteState: false when the row no longer matches.
 export async function updateRevisedQuote(
   conn: PoolConnection,
   input: {
@@ -335,7 +371,7 @@ export async function updateRevisedQuote(
     toPriceStatus: PriceStatus;
     fromRevisedPrice: string | null;
     newRevisedPrice: string | null;
-    applyRevision: boolean;
+    copyRevisionToPrice: boolean;
   }
 ): Promise<boolean> {
   const [result] = await conn.query<ResultSetHeader>(
@@ -344,7 +380,7 @@ export async function updateRevisedQuote(
      WHERE id = ? AND status = ? AND price_status = ? AND revised_price <=> ?`,
     [
       input.toPriceStatus,
-      input.applyRevision,
+      input.copyRevisionToPrice,
       input.newRevisedPrice,
       input.id,
       input.status,

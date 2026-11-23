@@ -2,6 +2,9 @@ export const JOB_EVENT_TYPE = {
   REQUEST_CREATED: "request_created",
   REQUEST_REJECTED: "request_rejected",
   REQUEST_CANCELLED: "request_cancelled",
+  // Written by the server, with no actor and no payload: a pending request
+  // whose requested start passed PENDING_EXPIRY_HOURS ago is cancelled.
+  REQUEST_EXPIRED: "request_expired",
   REQUEST_STARTED: "request_started",
   REQUEST_COMPLETED: "request_completed",
   REQUEST_PAID: "request_paid",

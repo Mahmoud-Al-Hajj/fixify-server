@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { PoolConnection } from "mysql2/promise";
 import { withTransaction } from "../models-db/pool";
 import {
   findVisitsForRequest,
@@ -11,7 +12,11 @@ import {
 } from "../models-db/visits";
 import { listAvailability } from "../models-db/providers";
 import { insertJobEvent } from "../models-db/job-events";
-import { wallClockToDate, beirutNow } from "../models-db/format-datetime";
+import {
+  beirutNow,
+  formatWallClock,
+  wallClockToDate,
+} from "../models-db/format-datetime";
 import { lockRequestForUpdate, type Request } from "../models-db/requests";
 import { JOB_EVENT_TYPE } from "../constants/job-event-type";
 import {
@@ -26,9 +31,9 @@ import {
 } from "../constants/errors";
 import {
   loadRequestForActor,
-  getRequestForActor,
   CHANGED_CONCURRENTLY_MESSAGE,
-} from "./requests";
+} from "./request-access";
+import { getRequestForActor, type RequestDetails } from "./request-reads";
 import { fitsWorkingHours } from "./slot-rules";
 import { reserveSlot } from "./slot-reservation";
 import {
@@ -38,7 +43,14 @@ import {
   type RescheduleAction,
 } from "./visit-rules";
 
-type RequestDetails = Awaited<ReturnType<typeof getRequestForActor>>;
+// A reschedule moves or clears a visit and inserts a job event: take the
+// request row first, the same order as cancel (CLAUDE.md "Deadlocks").
+async function lockRequestFirst(
+  conn: PoolConnection,
+  requestId: string
+): Promise<void> {
+  await lockRequestForUpdate(conn, requestId);
+}
 
 // The visit, reached only through a request the caller is a party to.
 async function loadVisitForActor(
@@ -119,8 +131,7 @@ export async function proposeReschedule(
   }
 
   await withTransaction(async (conn) => {
-    // The request row first, the same order as cancel (CLAUDE.md "Deadlocks").
-    await lockRequestForUpdate(conn, request.id);
+    await lockRequestFirst(conn, request.id);
     const proposed = await proposeVisitStart(conn, {
       id: visit.id,
       requestId: request.id,
@@ -137,7 +148,7 @@ export async function proposeReschedule(
       eventType: JOB_EVENT_TYPE.VISIT_RESCHEDULE_PROPOSED,
       payload: {
         visitId: visit.id,
-        proposedStart: start.toISOString().slice(0, 23),
+        proposedStart: formatWallClock(start),
       },
     });
   });
@@ -171,8 +182,7 @@ export async function acceptReschedule(
   const end = endAfterMove(visit, proposal.start);
 
   await withTransaction(async (conn) => {
-    // The request row first, the same order as cancel (CLAUDE.md "Deadlocks").
-    await lockRequestForUpdate(conn, request.id);
+    await lockRequestFirst(conn, request.id);
     await reserveSlot(conn, {
       providerId: request.providerId,
       start: proposal.start,
@@ -222,8 +232,7 @@ export async function closeReschedule(
   const proposedStart = visit.proposedStart;
 
   await withTransaction(async (conn) => {
-    // The request row first, the same order as cancel (CLAUDE.md "Deadlocks").
-    await lockRequestForUpdate(conn, request.id);
+    await lockRequestFirst(conn, request.id);
     const cleared = await clearVisitProposal(conn, {
       id: visit.id,
       proposedStart: proposal.start,
@@ -314,7 +323,7 @@ export async function addFollowUpVisit(
       eventType: JOB_EVENT_TYPE.VISIT_ADDED,
       payload: {
         visitId,
-        scheduledStart: start.toISOString().slice(0, 23),
+        scheduledStart: formatWallClock(start),
         finishedVisitId: current.id,
       },
     });

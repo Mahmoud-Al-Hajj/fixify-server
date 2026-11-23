@@ -23,7 +23,6 @@ app.set("trust proxy", "loopback");
 
 app.use(helmet());
 
-// CORS — explicit allowlist, never a wildcard
 app.use(
   cors({
     origin: env.corsOrigins,
@@ -40,7 +39,6 @@ app.get("/health", (_req, res) => {
   res.status(200).json({ status: "ok" });
 });
 
-// Feature routes
 app.use("/categories", categoriesRouter);
 app.use("/districts", districtsRouter);
 app.use("/auth", authRouter);
@@ -50,7 +48,6 @@ app.use("/users", usersRouter);
 app.use("/intake-sessions", intakeRouter);
 app.use("/notifications", notificationsRouter);
 
-// OpenAPI spec and Swagger UI
 app.use("/docs", docsRouter);
 
 // Unmatched route → 404 in the standard error shape

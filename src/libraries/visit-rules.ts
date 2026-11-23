@@ -15,6 +15,7 @@ import {
   InvalidTransitionError,
   ValidationError,
 } from "../constants/errors";
+import { EARLY_START_LIMIT_HOURS } from "../constants/booking";
 
 export const RESCHEDULE_ACTION = {
   PROPOSE: "propose",
@@ -131,5 +132,24 @@ export function assertCanAddFollowUp(check: FollowUpCheck): void {
   }
   if (check.start <= check.now) {
     throw new ValidationError("The follow-up visit must start in the future");
+  }
+}
+
+// A provider may start a visit late, but not more than EARLY_START_LIMIT_HOURS
+// before it is booked: to start earlier, they propose a new time. Both times
+// are Beirut wall clock, so the day is read from the UTC fields.
+export function assertStartNotTooEarly(scheduledStart: Date, now: Date): void {
+  const earliest =
+    scheduledStart.getTime() - EARLY_START_LIMIT_HOURS * 3_600_000;
+  if (now.getTime() < earliest) {
+    const day = scheduledStart.toLocaleDateString("en-GB", {
+      timeZone: "UTC",
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+    });
+    throw new ConflictError(
+      `This visit is booked for ${day}; propose a new time to start earlier.`
+    );
   }
 }

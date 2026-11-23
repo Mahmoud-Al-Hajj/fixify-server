@@ -1,3 +1,5 @@
+> **Archived.** Kept for the record and not kept up to date; see `docs/archive/README.md`.
+
 # Fixify — Project Specification
 
 > **Purpose of this document:** single source of truth for the Fixify project. Any agent or developer picking up work should read this first. It defines what the product is, what has been decided, what is deliberately out of scope, and the order things get built in.

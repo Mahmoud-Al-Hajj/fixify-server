@@ -26,6 +26,12 @@ export function wallClockToDate(formatted: string): Date {
   );
 }
 
+// A wall-clock Date as the API and job_events write times:
+// "YYYY-MM-DDTHH:mm:ss.SSS", no offset. The inverse of wallClockToDate.
+export function formatWallClock(date: Date): string {
+  return date.toISOString().slice(0, 23);
+}
+
 // The current Beirut wall-clock time, built with Date.UTC like every other
 // wall-clock Date, so it compares directly against one. sv-SE formats as
 // "YYYY-MM-DD HH:mm:ss".

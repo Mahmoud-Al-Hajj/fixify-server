@@ -7,7 +7,7 @@
         "rule": "wide-tracking",
         "value": "*",
         "files": [
-          "AI_DEMO.html"
+          "docs/archive/AI_DEMO.html"
         ],
         "createdAt": "2026-11-12T18:39:01.820Z",
         "reason": "Claude: 0.05em is on short uppercase SVG section labels, not body text"
@@ -16,7 +16,7 @@
         "rule": "cramped-padding",
         "value": "*",
         "files": [
-          "AI_DEMO.html"
+          "docs/archive/AI_DEMO.html"
         ],
         "createdAt": "2026-11-12T18:39:02.253Z",
         "reason": "Claude: tablewrap's table cells carry 9px/12px padding, text is inset"
@@ -25,7 +25,7 @@
         "rule": "low-contrast",
         "value": "*",
         "files": [
-          "AI_DEMO.html"
+          "docs/archive/AI_DEMO.html"
         ],
         "createdAt": "2026-11-12T18:39:07.752Z",
         "reason": "Claude: detector pairs dark-theme token backgrounds with light-theme text; each theme defines matching fg/bg tokens"

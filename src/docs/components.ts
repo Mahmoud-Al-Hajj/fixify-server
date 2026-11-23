@@ -111,6 +111,11 @@ const SPECIFIC_CODES: Record<
     meaning:
       "Creating a request or changing its requested start: the time overlaps an open visit of the provider or your own pending request to them. Accepting a quote onto a taken slot stays CONFLICT.",
   },
+  [ERROR_CODE.REQUESTED_START_PASSED]: {
+    status: statusOf(ConflictError),
+    meaning:
+      "Accepting a quote: the request's requested start has passed. Change the requested start, then accept again. A slot taken at accept stays CONFLICT.",
+  },
   [ERROR_CODE.ANALYSIS_CAP_REACHED]: {
     status: statusOf(TooManyRequestsError),
     meaning: "The session has used all its analysis attempts.",
@@ -237,7 +242,7 @@ export const eventEntry = z
     at: wallClock,
     actor: documented(z.enum(REQUEST_ACTOR_ROLE).nullable(), {
       description:
-        "Who did it, as their role on the request; null when that account is gone.",
+        "Who did it, as their role on the request; null when that account is gone or the server acted (request_expired).",
     }),
     details: documented(
       z

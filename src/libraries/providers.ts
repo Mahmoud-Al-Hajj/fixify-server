@@ -17,7 +17,11 @@ import {
 } from "../models-db/providers";
 import { findCategoryIds } from "../models-db/categories";
 import { listOpenVisitsForProviders } from "../models-db/visits";
-import { beirutNow, wallClockToDate } from "../models-db/format-datetime";
+import {
+  beirutNow,
+  formatWallClock,
+  wallClockToDate,
+} from "../models-db/format-datetime";
 import { proposeSlots, SLOT_HORIZON_DAYS } from "./slot-rules";
 import {
   findRatingSummariesForProviders,
@@ -83,8 +87,8 @@ async function slotsForProviders(
         now,
         durationMinutes
       ).map((slot) => ({
-        start: slot.start.toISOString().slice(0, 23),
-        end: slot.end.toISOString().slice(0, 23),
+        start: formatWallClock(slot.start),
+        end: formatWallClock(slot.end),
       })),
     ])
   );
