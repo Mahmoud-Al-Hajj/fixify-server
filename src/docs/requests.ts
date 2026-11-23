@@ -512,7 +512,7 @@ export const requestsPaths: Paths = {
       "cancelRequest",
       "Cancel a job",
       "the customer while pending; either party once scheduled or in progress",
-      "Cancels every open visit, which frees its slot, and withdraws a revised quote that is waiting; the agreed price stays."
+      "Cancels every open visit, which frees its slot, and withdraws a revised quote that is waiting; the agreed price stays. The server also cancels a pending request on its own 24 hours after its requestedStart (event request_expired, no actor)."
     ),
   },
   "/requests/{id}/start": {

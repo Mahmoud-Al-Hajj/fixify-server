@@ -93,7 +93,8 @@ transaction, so a job never has more than one open visit.
 the booking timeline, the audit trail, and the notification feed. Never updated, never
 deleted. Payloads never leave the server as stored: both reads use the public event view
 in `libraries/event-entries.ts` (`PUBLIC_DETAILS`, a whitelist per event type; `actor`
-is a role, never a user id). `GET /requests/:id/timeline` is either party's history,
+is a role, never a user id, and null when the account is gone or the server acted, as in
+`request_expired`). `GET /requests/:id/timeline` is either party's history,
 oldest first. `GET /notifications` is the newest 50 events on the user's requests made by
 someone else, with `unreadCount`; unread means `created_at > users.notifications_read_at`
 (NULL = all) and no `notification_reads` row for that user and event, one SQL expression for
@@ -134,7 +135,8 @@ pending request to the same provider. While the request is `pending`, the custom
 it (`POST /requests/:id/requested-start`): a future time that fits the provider's working
 hours for `COALESCE(estimated_duration_minutes, 60)` (400 otherwise), the same time again is
 a no-op, and the proposed quote stands. It reserves nothing; this is how a customer gets past
-a slot-taken 409 at quote acceptance. "Add to calendar" is entirely client-side (the device
+a slot-taken 409 at quote acceptance (code `CONFLICT`) and a requested start that has passed
+(409 `REQUESTED_START_PASSED`, also at acceptance). "Add to calendar" is entirely client-side (the device
 calendar); the server exposes no calendar or ICS endpoint.
 
 ### Request lifecycle
@@ -150,6 +152,16 @@ PENDING ──accept quote(C)──> SCHEDULED ──start(P)──> IN_PROGRESS
 Six statuses: `pending`, `scheduled`, `in_progress`, `completed`, `rejected`, `cancelled`.
 The intake session is not part of this lifecycle — a request starts at `pending` when it
 is created.
+
+**Expiry.** A `pending` request whose `requested_start` passed more than 24 hours ago
+(`PENDING_EXPIRY_HOURS`) is cancelled by the server: `expirePendingRequests`
+(`libraries/requests.ts`), run from `server.ts` on start and then every 15 minutes. It is
+the cancel transition with no actor: a `request_expired` event with no actor and no
+payload, in both parties' feeds. There is no `expired` status. The 24 hours count from
+`requested_start`, never from either party's last action, so no action keeps a dead request
+alive. Each request is re-checked under its row lock (`lockExpiredPendingRequest`), so a
+time the customer just moved forward is not expired. A request with no `requested_start`
+never expires.
 
 **Quote state is NOT a job status.** It lives in `requests.price_status`
 (`none` → `proposed` → `accepted` | `declined`) and moves independently, because a revised
@@ -177,7 +189,10 @@ SCHEDULED ─────────start(P)────────> IN_PROGRE
 
 Starting a job moves the visit straight from `SCHEDULED` to `IN_PROGRESS`. On a job already
 `in_progress` (a follow-up is scheduled), start moves that next visit instead and writes
-another `request_started` event with its `visitId`; the job status does not change. `EN_ROUTE`
+another `request_started` event with its `visitId`; the job status does not change. Either
+start is refused (409 `CONFLICT`) more than 24 hours before the visit's `scheduled_start`
+(`assertStartNotTooEarly`, `libraries/visit-rules.ts`); to start earlier the provider
+proposes a new time. A late start is always allowed. `EN_ROUTE`
 ("On my way") is a Phase 4 addition to be layered on top of this later; nothing moves a
 visit into it yet, and nothing is designed around it. Cancelling a request cancels every
 visit that is not yet `DONE` or `CANCELLED`, which releases its slot (`active_slot`
@@ -654,7 +669,7 @@ Seed scripts are the one exception, and only under `scripts/`, never reachable f
 route. Demo data for the presentation belongs there.
 
 The request state machine, the quote rules (`libraries/quote-rules.ts`) and the
-reschedule rules (`libraries/visit-rules.ts`) are expected to have unit tests, and so are
+reschedule and early-start rules (`libraries/visit-rules.ts`) are expected to have unit tests, and so are
 slot generation and `fitsWorkingHours` (`libraries/slot-rules.ts`), the search order
 (`sortMatches`, `libraries/provider-ranking.ts`) and the booking-from-session derivations
 (`deriveBookingFields`, `buildDescription`). Other test suites are added on request, not
